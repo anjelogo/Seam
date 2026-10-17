@@ -1,0 +1,531 @@
+{
+ "query": {
+  "prompt": "grunge emo 2000s",
+  "budget": {
+   "cents": 12000,
+   "currency": "USD"
+  },
+  "sizes": {
+   "top": "M",
+   "bottom": "W32",
+   "shoes": "US10"
+  },
+  "slots": [
+   "top",
+   "bottom",
+   "outer",
+   "shoes"
+  ],
+  "sources": [],
+  "num_outfits": 3,
+  "require_3d_ready": false,
+  "body": {
+   "base": "masc",
+   "height": 0.6,
+   "weight": 0.5,
+   "muscle": 0.5,
+   "shoulders": 0.7,
+   "chest": 0.55,
+   "waist": 0.4,
+   "hips": 0.5,
+   "leg_length": 0.55,
+   "skin_tone": "#c68e6a"
+  },
+  "previous_outfit_ids": [],
+  "feedback": null
+ },
+ "outfits": [
+  {
+   "id": "o_1",
+   "name": "Basement Show",
+   "vibe_summary": "Faded black layers with a heavy boot, very 2003 local show.",
+   "pieces": {
+    "top": {
+     "item_id": "ebay:1001",
+     "reason": "Relaxed band tee sits well on broader shoulders without clinging.",
+     "alternates": [
+      "depop:d2002"
+     ]
+    },
+    "bottom": {
+     "item_id": "ebay:1004",
+     "reason": "Baggy cut balances the boots and keeps the silhouette grungy.",
+     "alternates": []
+    },
+    "outer": {
+     "item_id": "ebay:1006",
+     "reason": "Oversized denim jacket adds structure at the shoulders.",
+     "alternates": []
+    },
+    "shoes": {
+     "item_id": "ebay:1008",
+     "reason": "Canvas high tops keep the total low.",
+     "alternates": []
+    }
+   },
+   "total": {
+    "cents": 10700,
+    "currency": "USD"
+   },
+   "savings_vs_retail": {
+    "cents": 7500,
+    "currency": "USD"
+   },
+   "within_budget": true
+  }
+ ],
+ "items": {
+  "ebay:1001": {
+   "id": "ebay:1001",
+   "listing": {
+    "source": "ebay",
+    "source_id": "1001",
+    "url": "https://example.invalid/ebay/1001",
+    "title": "Vintage band tee faded black",
+    "description": "MOCK listing: Vintage band tee faded black",
+    "price": {
+     "cents": 2400,
+     "currency": "USD"
+    },
+    "shipping": {
+     "cents": 599,
+     "currency": "USD"
+    },
+    "condition": "good",
+    "brand": null,
+    "size_raw": "M",
+    "images": [
+     {
+      "url": "https://example-cdn.invalid/ebay_1001_0.jpg",
+      "local_path": "data/raw/ebay_1001_0.jpg",
+      "width": 1200,
+      "height": 1600,
+      "view": "flat_lay"
+     }
+    ],
+    "seller": "mock_seller",
+    "scraped_at": "2026-10-17T18:00:00Z"
+   },
+   "tags": {
+    "slot": "top",
+    "category": "tee",
+    "colors": [
+     {
+      "name": "black",
+      "hex": "#111111",
+      "ratio": 0.9
+     }
+    ],
+    "pattern": null,
+    "material": null,
+    "fit": "relaxed",
+    "style_tags": [
+     "grunge",
+     "band tee"
+    ],
+    "era": null,
+    "size_normalized": "M",
+    "confidence": 0.86,
+    "est_retail": {
+     "cents": 4500,
+     "currency": "USD"
+    },
+    "tagger": "perceptron-mk1.5",
+    "clean_image": {
+     "url": "/static/clean/ebay_1001.png",
+     "local_path": "data/clean/ebay_1001.png",
+     "width": 1024,
+     "height": 1024,
+     "view": "flat_lay"
+    },
+    "best_view_index": 0,
+    "garment_box": [
+     0.12,
+     0.08,
+     0.88,
+     0.95
+    ],
+    "usable_for_3d": true,
+    "unusable_reason": null
+   },
+   "asset": {
+    "item_id": "ebay:1001",
+    "status": "ready",
+    "tier": "template_textured",
+    "template_id": "tee_v1",
+    "glb_url": "/static/glb/ebay_1001.glb",
+    "voxel_glb_url": null,
+    "thumbnail_url": "/static/thumb/ebay_1001.png",
+    "fit": {
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "scale": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "follows_body_morphs": true,
+    "gen_seconds": 17.2,
+    "error": null,
+    "created_at": "2026-10-17T18:00:00Z"
+   }
+  },
+  "ebay:1004": {
+   "id": "ebay:1004",
+   "listing": {
+    "source": "ebay",
+    "source_id": "1004",
+    "url": "https://example.invalid/ebay/1004",
+    "title": "Baggy black jeans W32",
+    "description": "MOCK listing: Baggy black jeans W32",
+    "price": {
+     "cents": 2800,
+     "currency": "USD"
+    },
+    "shipping": {
+     "cents": 599,
+     "currency": "USD"
+    },
+    "condition": "good",
+    "brand": null,
+    "size_raw": "W32",
+    "images": [
+     {
+      "url": "https://example-cdn.invalid/ebay_1004_0.jpg",
+      "local_path": "data/raw/ebay_1004_0.jpg",
+      "width": 1200,
+      "height": 1600,
+      "view": "flat_lay"
+     }
+    ],
+    "seller": "mock_seller",
+    "scraped_at": "2026-10-17T18:00:00Z"
+   },
+   "tags": {
+    "slot": "bottom",
+    "category": "jeans",
+    "colors": [
+     {
+      "name": "black",
+      "hex": "#111111",
+      "ratio": 0.9
+     }
+    ],
+    "pattern": null,
+    "material": null,
+    "fit": "relaxed",
+    "style_tags": [
+     "grunge",
+     "baggy"
+    ],
+    "era": null,
+    "size_normalized": "W32",
+    "confidence": 0.86,
+    "est_retail": null,
+    "tagger": "perceptron-mk1.5",
+    "clean_image": {
+     "url": "/static/clean/ebay_1004.png",
+     "local_path": "data/clean/ebay_1004.png",
+     "width": 1024,
+     "height": 1024,
+     "view": "flat_lay"
+    },
+    "best_view_index": 0,
+    "garment_box": [
+     0.12,
+     0.08,
+     0.88,
+     0.95
+    ],
+    "usable_for_3d": true,
+    "unusable_reason": null
+   },
+   "asset": {
+    "item_id": "ebay:1004",
+    "status": "ready",
+    "tier": "template_textured",
+    "template_id": "pants_v1",
+    "glb_url": "/static/glb/ebay_1004.glb",
+    "voxel_glb_url": null,
+    "thumbnail_url": "/static/thumb/ebay_1004.png",
+    "fit": {
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "scale": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "follows_body_morphs": true,
+    "gen_seconds": 17.2,
+    "error": null,
+    "created_at": "2026-10-17T18:00:00Z"
+   }
+  },
+  "ebay:1006": {
+   "id": "ebay:1006",
+   "listing": {
+    "source": "ebay",
+    "source_id": "1006",
+    "url": "https://example.invalid/ebay/1006",
+    "title": "Black denim jacket",
+    "description": "MOCK listing: Black denim jacket",
+    "price": {
+     "cents": 3500,
+     "currency": "USD"
+    },
+    "shipping": {
+     "cents": 599,
+     "currency": "USD"
+    },
+    "condition": "good",
+    "brand": null,
+    "size_raw": "M",
+    "images": [
+     {
+      "url": "https://example-cdn.invalid/ebay_1006_0.jpg",
+      "local_path": "data/raw/ebay_1006_0.jpg",
+      "width": 1200,
+      "height": 1600,
+      "view": "flat_lay"
+     }
+    ],
+    "seller": "mock_seller",
+    "scraped_at": "2026-10-17T18:00:00Z"
+   },
+   "tags": {
+    "slot": "outer",
+    "category": "denim_jacket",
+    "colors": [
+     {
+      "name": "black",
+      "hex": "#111111",
+      "ratio": 0.9
+     }
+    ],
+    "pattern": null,
+    "material": null,
+    "fit": "oversized",
+    "style_tags": [
+     "grunge"
+    ],
+    "era": null,
+    "size_normalized": "M",
+    "confidence": 0.86,
+    "est_retail": {
+     "cents": 8900,
+     "currency": "USD"
+    },
+    "tagger": "perceptron-mk1.5",
+    "clean_image": {
+     "url": "/static/clean/ebay_1006.png",
+     "local_path": "data/clean/ebay_1006.png",
+     "width": 1024,
+     "height": 1024,
+     "view": "flat_lay"
+    },
+    "best_view_index": 0,
+    "garment_box": [
+     0.12,
+     0.08,
+     0.88,
+     0.95
+    ],
+    "usable_for_3d": true,
+    "unusable_reason": null
+   },
+   "asset": {
+    "item_id": "ebay:1006",
+    "status": "processing",
+    "tier": "generated",
+    "template_id": null,
+    "glb_url": null,
+    "voxel_glb_url": null,
+    "thumbnail_url": null,
+    "fit": {
+     "position": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "rotation": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "scale": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "follows_body_morphs": false,
+    "gen_seconds": null,
+    "error": null,
+    "created_at": "2026-10-17T18:00:00Z"
+   }
+  },
+  "depop:d2002": {
+   "id": "depop:d2002",
+   "listing": {
+    "source": "depop",
+    "source_id": "d2002",
+    "url": "https://example.invalid/depop/d2002",
+    "title": "Striped long sleeve thermal",
+    "description": "MOCK listing: Striped long sleeve thermal",
+    "price": {
+     "cents": 1800,
+     "currency": "USD"
+    },
+    "shipping": {
+     "cents": 599,
+     "currency": "USD"
+    },
+    "condition": "good",
+    "brand": null,
+    "size_raw": "M",
+    "images": [
+     {
+      "url": "https://example-cdn.invalid/depop_d2002_0.jpg",
+      "local_path": "data/raw/depop_d2002_0.jpg",
+      "width": 1200,
+      "height": 1600,
+      "view": "hanger"
+     }
+    ],
+    "seller": "mock_seller",
+    "scraped_at": "2026-10-17T18:00:00Z"
+   },
+   "tags": {
+    "slot": "top",
+    "category": "longsleeve",
+    "colors": [
+     {
+      "name": "oxblood",
+      "hex": "#5a1a1f",
+      "ratio": 0.7
+     },
+     {
+      "name": "black",
+      "hex": "#111111",
+      "ratio": 0.3
+     }
+    ],
+    "pattern": null,
+    "material": null,
+    "fit": "slim",
+    "style_tags": [
+     "emo",
+     "y2k"
+    ],
+    "era": "2000s",
+    "size_normalized": "M",
+    "confidence": 0.86,
+    "est_retail": null,
+    "tagger": "perceptron-mk1.5",
+    "clean_image": {
+     "url": "/static/clean/depop_d2002.png",
+     "local_path": "data/clean/depop_d2002.png",
+     "width": 1024,
+     "height": 1024,
+     "view": "hanger"
+    },
+    "best_view_index": 0,
+    "garment_box": [
+     0.12,
+     0.08,
+     0.88,
+     0.95
+    ],
+    "usable_for_3d": true,
+    "unusable_reason": null
+   },
+   "asset": null
+  },
+  "ebay:1008": {
+   "id": "ebay:1008",
+   "listing": {
+    "source": "ebay",
+    "source_id": "1008",
+    "url": "https://example.invalid/ebay/1008",
+    "title": "Black canvas high tops US10",
+    "description": "MOCK listing: Black canvas high tops US10",
+    "price": {
+     "cents": 2000,
+     "currency": "USD"
+    },
+    "shipping": {
+     "cents": 599,
+     "currency": "USD"
+    },
+    "condition": "good",
+    "brand": null,
+    "size_raw": "US10",
+    "images": [
+     {
+      "url": "https://example-cdn.invalid/ebay_1008_0.jpg",
+      "local_path": "data/raw/ebay_1008_0.jpg",
+      "width": 1200,
+      "height": 1600,
+      "view": "detail"
+     }
+    ],
+    "seller": "mock_seller",
+    "scraped_at": "2026-10-17T18:00:00Z"
+   },
+   "tags": {
+    "slot": "shoes",
+    "category": "sneakers",
+    "colors": [
+     {
+      "name": "black",
+      "hex": "#111111",
+      "ratio": 0.9
+     }
+    ],
+    "pattern": null,
+    "material": null,
+    "fit": "unknown",
+    "style_tags": [
+     "emo",
+     "punk"
+    ],
+    "era": null,
+    "size_normalized": "US10",
+    "confidence": 0.86,
+    "est_retail": null,
+    "tagger": "perceptron-mk1.5",
+    "clean_image": null,
+    "best_view_index": 0,
+    "garment_box": [
+     0.12,
+     0.08,
+     0.88,
+     0.95
+    ],
+    "usable_for_3d": false,
+    "unusable_reason": "detail_shot"
+   },
+   "asset": null
+  }
+ },
+ "took_ms": 6840
+}

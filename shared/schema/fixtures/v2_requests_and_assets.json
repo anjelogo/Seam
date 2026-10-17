@@ -1,0 +1,205 @@
+{
+ "POST /outfits request (StyleQuery)": {
+  "prompt": "grunge emo 2000s",
+  "budget": {
+   "cents": 12000,
+   "currency": "USD"
+  },
+  "sizes": {
+   "top": "M",
+   "bottom": "W32",
+   "shoes": "US10"
+  },
+  "slots": [
+   "top",
+   "bottom",
+   "outer",
+   "shoes"
+  ],
+  "sources": [],
+  "num_outfits": 3,
+  "require_3d_ready": false,
+  "body": {
+   "base": "masc",
+   "height": 0.6,
+   "weight": 0.5,
+   "muscle": 0.5,
+   "shoulders": 0.7,
+   "chest": 0.55,
+   "waist": 0.4,
+   "hips": 0.5,
+   "leg_length": 0.55,
+   "skin_tone": "#c68e6a"
+  },
+  "previous_outfit_ids": [],
+  "feedback": null
+ },
+ "POST /outfits refine request (StyleQuery)": {
+  "prompt": "grunge emo 2000s",
+  "budget": {
+   "cents": 12000,
+   "currency": "USD"
+  },
+  "sizes": {
+   "top": "M",
+   "bottom": "W32",
+   "shoes": "US10"
+  },
+  "slots": [
+   "top",
+   "bottom",
+   "outer",
+   "shoes"
+  ],
+  "sources": [],
+  "num_outfits": 3,
+  "require_3d_ready": false,
+  "body": {
+   "base": "masc",
+   "height": 0.6,
+   "weight": 0.5,
+   "muscle": 0.5,
+   "shoulders": 0.7,
+   "chest": 0.55,
+   "waist": 0.4,
+   "hips": 0.5,
+   "leg_length": 0.55,
+   "skin_tone": "#c68e6a"
+  },
+  "previous_outfit_ids": [
+   "o_1",
+   "o_2",
+   "o_3"
+  ],
+  "feedback": "cheaper, darker jacket"
+ },
+ "POST /gen3d/jobs request (GenJob)": {
+  "item_id": "ebay:1001",
+  "image_url": "/static/clean/ebay_1001.png",
+  "category": "tee",
+  "tier": "template_textured",
+  "resolution": 1024
+ },
+ "Asset3D by status (POST and GET /gen3d/jobs)": {
+  "queued": {
+   "item_id": "depop:d2002",
+   "status": "queued",
+   "tier": "template_textured",
+   "template_id": "longsleeve_v1",
+   "glb_url": null,
+   "voxel_glb_url": null,
+   "thumbnail_url": null,
+   "fit": {
+    "position": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "follows_body_morphs": true,
+   "gen_seconds": null,
+   "error": null,
+   "created_at": "2026-10-17T18:00:00Z"
+  },
+  "processing": {
+   "item_id": "ebay:1006",
+   "status": "processing",
+   "tier": "generated",
+   "template_id": null,
+   "glb_url": null,
+   "voxel_glb_url": null,
+   "thumbnail_url": null,
+   "fit": {
+    "position": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "follows_body_morphs": false,
+   "gen_seconds": null,
+   "error": null,
+   "created_at": "2026-10-17T18:00:00Z"
+  },
+  "ready": {
+   "item_id": "ebay:1001",
+   "status": "ready",
+   "tier": "template_textured",
+   "template_id": "tee_v1",
+   "glb_url": "/static/glb/ebay_1001.glb",
+   "voxel_glb_url": null,
+   "thumbnail_url": "/static/thumb/ebay_1001.png",
+   "fit": {
+    "position": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "follows_body_morphs": true,
+   "gen_seconds": 17.2,
+   "error": null,
+   "created_at": "2026-10-17T18:00:00Z"
+  },
+  "failed": {
+   "item_id": "depop:d2009",
+   "status": "failed",
+   "tier": "generated",
+   "template_id": null,
+   "glb_url": null,
+   "voxel_glb_url": null,
+   "thumbnail_url": null,
+   "fit": {
+    "position": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rotation": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scale": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "follows_body_morphs": false,
+   "gen_seconds": null,
+   "error": "MOCK: mesh generation failed",
+   "created_at": "2026-10-17T18:00:00Z"
+  }
+ }
+}

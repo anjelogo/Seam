@@ -1,0 +1,328 @@
+"""
+Shared contract — DubHacks 2026 (thrift aggregator + 3D try-on).
+
+SOURCE OF TRUTH. `shared/schema/types.ts` mirrors this file by hand.
+Change both in the same commit, and tell the other person.
+
+Ownership:
+  Caden  -> Listing, ItemTags, Item (ingest + CV), StyleQuery, Outfit (LLM)
+  Anjelo -> Asset3D, GenJob (2D->3D), BodyProfile (avatar), UI
+  Both   -> enums, ImageRef, Money, API envelopes
+
+Conventions:
+  - Money is integer cents. Never floats.
+  - IDs are strings. Item.id = f"{source}:{source_id}" (stable across re-scrapes).
+  - Timestamps are UTC ISO-8601.
+  - Every enum has an `other`/`unknown` escape hatch so bad data never crashes ingest.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+# ───────────────────────── enums ─────────────────────────
+
+class Source(str, Enum):
+    ebay = "ebay"
+    depop = "depop"
+    poshmark = "poshmark"
+    grailed = "grailed"
+    mercari = "mercari"
+    other = "other"
+
+class Slot(str, Enum):
+    """Where an item goes on the body. One item per slot per outfit."""
+    top = "top"
+    bottom = "bottom"
+    outer = "outer"        # layered over top
+    onepiece = "onepiece"  # dress/jumpsuit: fills top+bottom
+    shoes = "shoes"
+    accessory = "accessory"
+
+class Category(str, Enum):
+    """Fine-grained garment type. Drives TEMPLATE_FOR_CATEGORY on the 3D side."""
+    # tops
+    tee = "tee"
+    longsleeve = "longsleeve"
+    tank = "tank"
+    button_up = "button_up"
+    polo = "polo"
+    sweater = "sweater"
+    hoodie = "hoodie"
+    sweatshirt = "sweatshirt"
+    # outer
+    jacket = "jacket"
+    denim_jacket = "denim_jacket"
+    leather_jacket = "leather_jacket"
+    coat = "coat"
+    vest = "vest"
+    # bottoms
+    jeans = "jeans"
+    pants = "pants"
+    cargo = "cargo"
+    shorts = "shorts"
+    skirt = "skirt"
+    # onepiece
+    dress = "dress"
+    jumpsuit = "jumpsuit"
+    # shoes / accessories
+    sneakers = "sneakers"
+    boots = "boots"
+    shoes_other = "shoes_other"
+    hat = "hat"
+    bag = "bag"
+    accessory_other = "accessory_other"
+    unknown = "unknown"
+
+class Condition(str, Enum):
+    new_with_tags = "new_with_tags"
+    like_new = "like_new"
+    good = "good"
+    fair = "fair"
+    unknown = "unknown"
+
+class Fit(str, Enum):
+    oversized = "oversized"
+    relaxed = "relaxed"
+    regular = "regular"
+    slim = "slim"
+    cropped = "cropped"
+    unknown = "unknown"
+
+class ImageView(str, Enum):
+    """What kind of photo this is. 3D quality depends heavily on this."""
+    flat_lay = "flat_lay"    # best for 3D
+    hanger = "hanger"        # good
+    mannequin = "mannequin"  # good
+    on_model = "on_model"    # needs segmentation, body occludes garment
+    detail = "detail"        # tag/close-up, useless for 3D
+    unknown = "unknown"
+
+class AssetTier(str, Enum):
+    template_textured = "template_textured"  # Floor: template mesh + TRELLIS.2 texturing
+    generated = "generated"                  # Target: TRELLIS.2 image->3D, fitted
+    voxel = "voxel"                          # Stylized fallback
+
+class AssetStatus(str, Enum):
+    queued = "queued"
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+
+class BodyBase(str, Enum):
+    masc = "masc"
+    fem = "fem"
+
+# ───────────────────────── primitives ─────────────────────────
+
+class Money(BaseModel):
+    cents: int = Field(ge=0)
+    currency: str = "USD"
+
+class ImageRef(BaseModel):
+    url: str                          # remote URL or /static/... path
+    local_path: Optional[str] = None  # on-disk copy (server only)
+    width: Optional[int] = None
+    height: Optional[int] = None
+    view: ImageView = ImageView.unknown
+
+class Color(BaseModel):
+    name: str            # human name: "washed black"
+    hex: str             # "#2b2b2b"
+    ratio: float = Field(ge=0, le=1, default=1.0)  # share of garment area
+
+# ───────────────────────── Caden: ingest ─────────────────────────
+
+class Listing(BaseModel):
+    """Raw-ish normalized listing straight from a source. No CV yet."""
+    source: Source
+    source_id: str
+    url: str
+    title: str
+    description: Optional[str] = None
+    price: Money
+    shipping: Optional[Money] = None
+    condition: Condition = Condition.unknown
+    brand: Optional[str] = None
+    size_raw: Optional[str] = None    # exactly as listed: "M", "32x30", "US 10"
+    images: list[ImageRef] = []
+    seller: Optional[str] = None
+    scraped_at: datetime = Field(default_factory=_now)
+
+# ───────────────────────── Caden: CV / tagging ─────────────────────────
+
+class ItemTags(BaseModel):
+    """Output of the vision/tagging pass on a Listing."""
+    slot: Slot
+    category: Category
+    colors: list[Color] = []
+    pattern: Optional[str] = None     # "solid", "plaid", "graphic", "striped"
+    material: Optional[str] = None    # "denim", "leather", "cotton jersey"
+    fit: Fit = Fit.unknown
+    style_tags: list[str] = []        # lowercase: ["grunge", "y2k", "emo"]
+    era: Optional[str] = None         # "2000s", "90s"
+    size_normalized: Optional[str] = None  # "M", "W32", "US10"
+    confidence: float = Field(ge=0, le=1, default=0.5)
+    est_retail: Optional[Money] = None       # v2: estimated new-retail price, feeds savings_vs_retail
+    tagger: Optional[str] = None             # v2: model that produced these tags, e.g. "perceptron-mk1.5"
+
+    # ---- the handoff to Anjelo's 3D pipeline ----
+    clean_image: Optional[ImageRef] = None   # bg removed, garment only, RGBA PNG
+    best_view_index: int = 0                 # index into Listing.images used for clean_image
+    garment_box: Optional[tuple[float, float, float, float]] = None  # v2: [x0,y0,x1,y1] 0..1 in images[best_view_index]
+    usable_for_3d: bool = False              # Caden's call: single garment, front view, not cropped
+    unusable_reason: Optional[str] = None    # "on_model_occluded", "multiple_items", "detail_shot"
+
+class Item(BaseModel):
+    """The unit everything else references. Listing + tags (+ 3D once ready)."""
+    id: str                                  # f"{source}:{source_id}"
+    listing: Listing
+    tags: Optional[ItemTags] = None          # None until tagged
+    asset: Optional["Asset3D"] = None        # None until 3D is ready (Anjelo fills)
+
+    @classmethod
+    def make_id(cls, source: Source, source_id: str) -> str:
+        return f"{source.value}:{source_id}"
+
+# ───────────────────────── Caden: outfit LLM ─────────────────────────
+
+class SizeProfile(BaseModel):
+    top: Optional[str] = None      # "M"
+    bottom: Optional[str] = None   # "W32"
+    shoes: Optional[str] = None    # "US10"
+
+class StyleQuery(BaseModel):
+    """What the UI sends when the user hits 'Find outfits'."""
+    prompt: str                                  # "grunge emo 2000s"
+    budget: Optional[Money] = None               # total outfit cap
+    sizes: SizeProfile = SizeProfile()
+    slots: list[Slot] = [Slot.top, Slot.bottom, Slot.outer, Slot.shoes]
+    sources: list[Source] = []                   # empty = all
+    num_outfits: int = Field(default=3, ge=1, le=6)
+    require_3d_ready: bool = False               # demo mode: only items with assets
+    body: Optional["BodyProfile"] = None         # v2: avatar shape, lets the LLM reason about fit
+    previous_outfit_ids: list[str] = []          # v2: refine round: outfits being replaced
+    feedback: Optional[str] = None               # v2: refine round: "cheaper, darker jacket"
+
+class OutfitPiece(BaseModel):
+    item_id: str
+    reason: str                       # one line from the LLM: why this piece fits the vibe
+    alternates: list[str] = []        # other item_ids valid for this slot (powers the swap UI)
+
+class Outfit(BaseModel):
+    id: str
+    name: str                         # "Basement Show Regular"
+    vibe_summary: str                 # 1–2 sentences
+    pieces: dict[Slot, OutfitPiece]   # keyed by slot
+    total: Money                      # sum of item prices (+ shipping if known)
+    savings_vs_retail: Optional[Money] = None  # optional Visa-angle stat
+    within_budget: bool = True
+
+# ───────────────────────── Anjelo: 3D ─────────────────────────
+
+class Transform(BaseModel):
+    """Placement of a garment GLB on the avatar, avatar-local space, meters."""
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)  # euler XYZ, radians
+    scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+
+class Asset3D(BaseModel):
+    item_id: str
+    status: AssetStatus = AssetStatus.queued
+    tier: AssetTier
+    template_id: Optional[str] = None     # set when tier == template_textured, e.g. "tee_v1"
+    glb_url: Optional[str] = None         # /static/glb/<item_id>.glb
+    voxel_glb_url: Optional[str] = None   # optional stylized variant
+    thumbnail_url: Optional[str] = None   # turntable still for cards
+    fit: Transform = Transform()          # only meaningful for tier == generated
+    follows_body_morphs: bool = False     # True for templates w/ matching shape keys
+    gen_seconds: Optional[float] = None
+    error: Optional[str] = None
+    created_at: datetime = Field(default_factory=_now)
+
+class GenJob(BaseModel):
+    """Request into the gen3d service."""
+    item_id: str
+    image_url: str                        # usually ItemTags.clean_image.url
+    category: Category
+    tier: AssetTier = AssetTier.template_textured
+    resolution: int = 512                 # 512 | 1024; 512 for live, 1024 for pre-bake
+
+# Category -> template mesh. None = no template yet (falls back to `generated`).
+TEMPLATE_FOR_CATEGORY: dict[Category, Optional[str]] = {
+    Category.tee: "tee_v1",
+    Category.tank: "tee_v1",
+    Category.polo: "tee_v1",
+    Category.longsleeve: "longsleeve_v1",
+    Category.button_up: "longsleeve_v1",
+    Category.sweater: "longsleeve_v1",
+    Category.sweatshirt: "longsleeve_v1",
+    Category.hoodie: "hoodie_v1",
+    Category.jacket: "jacket_v1",
+    Category.denim_jacket: "jacket_v1",
+    Category.leather_jacket: "jacket_v1",
+    Category.coat: "coat_v1",
+    Category.vest: None,
+    Category.jeans: "pants_v1",
+    Category.pants: "pants_v1",
+    Category.cargo: "pants_v1",
+    Category.shorts: "shorts_v1",
+    Category.skirt: "skirt_v1",
+    Category.dress: "dress_v1",
+    Category.jumpsuit: None,
+    Category.sneakers: None,
+    Category.boots: None,
+    Category.shoes_other: None,
+    Category.hat: None,
+    Category.bag: None,
+    Category.accessory_other: None,
+    Category.unknown: None,
+}
+
+# ───────────────────────── Anjelo: avatar ─────────────────────────
+
+class BodyProfile(BaseModel):
+    """
+    Slider state. All sliders are 0..1 and map 1:1 to GLB morph targets
+    of the same name (minus the `_`), so the frontend can loop over them.
+    0.5 = base mesh.
+    """
+    base: BodyBase = BodyBase.masc
+    height: float = Field(default=0.5, ge=0, le=1)
+    weight: float = Field(default=0.5, ge=0, le=1)
+    muscle: float = Field(default=0.5, ge=0, le=1)
+    shoulders: float = Field(default=0.5, ge=0, le=1)
+    chest: float = Field(default=0.5, ge=0, le=1)
+    waist: float = Field(default=0.5, ge=0, le=1)
+    hips: float = Field(default=0.5, ge=0, le=1)
+    leg_length: float = Field(default=0.5, ge=0, le=1)
+    skin_tone: str = "#c68e6a"
+
+# ───────────────────────── API envelopes ─────────────────────────
+
+class OutfitResponse(BaseModel):
+    """POST /outfits -> this. Items are de-duplicated into a lookup map."""
+    query: StyleQuery
+    outfits: list[Outfit]
+    items: dict[str, Item]            # item_id -> Item (includes alternates)
+    took_ms: int = 0
+
+class ItemsResponse(BaseModel):
+    """GET /items?slot=&category=&q= -> this. For browse/swap."""
+    items: list[Item]
+    total: int
+
+class ApiError(BaseModel):
+    error: str
+    detail: Optional[str] = None
+
+Item.model_rebuild()
+StyleQuery.model_rebuild()
+OutfitResponse.model_rebuild()
