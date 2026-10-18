@@ -1,0 +1,26 @@
+# same routes the vite dev proxy uses, so the frontend runs unchanged
+:80 {
+	encode zstd gzip
+
+	# /api/* -> api with the prefix stripped
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# gen3d routes already start with /gen3d
+	handle /gen3d/* {
+		reverse_proxy gen3d:8001
+	}
+
+	handle /static/* {
+		header Cache-Control "public, max-age=3600"
+		reverse_proxy api:8000
+	}
+
+	# built SPA, unknown paths fall back to index.html for react-router
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
