@@ -9,8 +9,10 @@
   "dependencies": {
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
+    "clsx": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.4",
     "three": "^0.186.1",
     "zustand": "^5.0.15"
   },
@@ -19,6 +21,7 @@
     "@types/node": "^24.19.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.2",
     "concurrently": "^10.0.6",
     "tailwindcss": "^4.3.3",

@@ -1,0 +1,94 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 20px;
+  color: #fff;
+  text-align: left;
+  transition:
+    border-color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out);
+}
+
+.card:hover {
+  border-color: rgba(255, 255, 255, 0.36);
+}
+
+.card.selected {
+  padding: 9.5px;
+  border: 1.5px solid #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    var(--glow);
+}
+
+.photo {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 14, 32, 0.4);
+}
+
+.meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--text-on-light);
+  box-shadow: var(--glow);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--select) var(--ease-out),
+    transform var(--select) var(--ease-out);
+}
+
+.selected .badge {
+  opacity: 1;
+  transform: none;
+}

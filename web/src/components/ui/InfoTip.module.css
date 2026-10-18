@@ -1,0 +1,53 @@
+.button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--target);
+  height: var(--target);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.7);
+  transition: color var(--fast) var(--ease-out);
+}
+
+.button:hover,
+.button:focus-visible,
+.active {
+  color: #fff;
+}
+
+/* ring hugs the 18px glyph, not the 44px hit area */
+.button:focus-visible {
+  outline-offset: -10px;
+}
+
+.tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  width: max-content;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--tooltip-border);
+  border-radius: var(--radius-tooltip);
+  background: var(--tooltip-bg);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--fast) var(--ease-out),
+    visibility 0s linear var(--fast);
+}
+
+.shown {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--fast) var(--ease-out);
+}

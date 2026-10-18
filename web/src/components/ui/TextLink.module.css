@@ -1,0 +1,24 @@
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-6);
+  min-width: var(--target);
+  min-height: var(--target);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.text {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  transition: text-shadow var(--fast) var(--ease-out);
+}
+
+.link:hover .text {
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.6);
+}
