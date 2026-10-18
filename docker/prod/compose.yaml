@@ -1,0 +1,77 @@
+# Production-ish stack for the demo: api + gen3d + caddy (built web) + cloudflare tunnel.
+#
+#   docker compose -f docker/prod/compose.yaml up --build -d
+#   docker compose -f docker/prod/compose.yaml logs -f tunnel   # public URL shows up here
+#
+# Local check without the tunnel: http://<ct-ip>:8080
+# Secrets come from the repo-root .env (FAL_KEY, ANTHROPIC_API_KEY, ...).
+# In a Proxmox LXC, run docker/prod/ct-setup.sh once instead (installs docker, checks the CT, starts this).
+# data/ is gitignored: copy seam.db + glb/ thumb/ clean/ raw/ over from your laptop, or set DATA_PATH.
+name: seam-prod
+
+x-backend: &backend
+  build:
+    context: ../..
+    dockerfile: docker/prod/backend.Dockerfile
+  image: seam-backend
+  env_file: ../../.env
+  restart: unless-stopped
+  init: true
+  logging: &logs
+    driver: json-file
+    options: { max-size: 10m, max-file: "3" } # small CT disk, keep logs bounded
+  volumes:
+    - ${DATA_PATH:-../../data}:/data # local seam.db + baked glbs/thumbs, shared by both services
+    - u2net:/root/.u2net # rembg model cache, survives rebuilds
+
+services:
+  api:
+    <<: *backend
+    working_dir: /app/api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
+    environment:
+      DATA_DIR: /data
+      GEN3D_URL: http://gen3d:8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  gen3d:
+    <<: *backend
+    working_dir: /app/gen3d
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --proxy-headers --forwarded-allow-ips=*
+    environment:
+      DATA_DIR: /data
+      ASSETS_DIR: /app/assets
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  web:
+    build:
+      context: ../..
+      dockerfile: docker/prod/web.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT_HOST:-8080}:80"
+    logging: *logs
+    depends_on:
+      api: { condition: service_healthy }
+      gen3d: { condition: service_healthy }
+
+  # Quick tunnel: random https://*.trycloudflare.com URL, no account needed.
+  # For a fixed hostname, create a tunnel in the Cloudflare dashboard pointing at http://web:80,
+  # put TUNNEL_TOKEN=... in .env and swap the command for: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://web:80
+    depends_on: [web]
+    logging: *logs
+
+volumes:
+  u2net:
