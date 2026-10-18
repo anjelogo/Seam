@@ -1,0 +1,154 @@
+.group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.track {
+  display: flex;
+}
+
+.pills {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  vertical-align: top;
+}
+
+.cards {
+  gap: var(--gap-20);
+}
+
+.swatches {
+  flex-wrap: wrap;
+  gap: var(--gap-16);
+}
+
+.option {
+  position: relative;
+  display: block;
+  cursor: pointer;
+  user-select: none;
+}
+
+.input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.visual {
+  transition:
+    background-color var(--select) var(--ease-out),
+    border-color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out),
+    color var(--select) var(--ease-out);
+}
+
+.input:focus-visible + .visual {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--target);
+  padding: 0 20px;
+  border-radius: var(--radius-pill);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.input:not(:checked) + .pill:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.input:checked + .pill {
+  background-color: #fff;
+  color: var(--text-on-light);
+  box-shadow: var(--glow);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-16);
+  width: 220px;
+  height: 260px;
+  padding: var(--gap-20);
+  border-radius: 26px;
+  color: #fff;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #fff;
+  opacity: 0;
+  transition: opacity var(--select) var(--ease-out);
+}
+
+.input:not(:checked) + .card:hover::before {
+  opacity: 0.08;
+}
+
+.input:checked + .card {
+  border-color: #fff;
+  color: var(--text-on-light);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    var(--glow);
+}
+
+.input:checked + .card::before {
+  opacity: 1;
+}
+
+.cardContent {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cardLabel {
+  position: relative;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.swatch {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+}
+
+.input:not(:checked) + .swatch:hover {
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+.input:checked + .swatch {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 24px rgba(255, 255, 255, 0.55);
+}

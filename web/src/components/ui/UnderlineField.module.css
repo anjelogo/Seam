@@ -1,0 +1,59 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-6);
+  min-width: 0;
+}
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.tip {
+  position: relative;
+  margin: -13px -13px -13px -6px;
+}
+
+.input {
+  width: 100%;
+  padding: 8px 0 10px;
+  border: 0;
+  border-bottom: 1.5px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+  appearance: none;
+  transition: border-color var(--fast) var(--ease-out);
+}
+
+.input::placeholder {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.input:focus {
+  border-bottom-color: #fff;
+}
+
+.input:disabled {
+  opacity: 0.4;
+}
+
+.input::-webkit-search-decoration,
+.input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+/* keeps chrome autofill from painting a light background */
+.input:-webkit-autofill {
+  -webkit-text-fill-color: #fff;
+  caret-color: #fff;
+  transition:
+    border-color var(--fast) var(--ease-out),
+    background-color 0s 600000s,
+    color 0s 600000s;
+}

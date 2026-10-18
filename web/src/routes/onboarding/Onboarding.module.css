@@ -1,0 +1,149 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--gutter);
+}
+
+.header {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--gap-12);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--target);
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-48);
+  width: 100%;
+  max-width: 880px;
+  text-align: center;
+}
+
+.question {
+  text-wrap: balance;
+}
+
+.heading {
+  display: inline;
+}
+
+.heading:focus {
+  outline: none;
+}
+
+.tip {
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+}
+
+.hidden {
+  visibility: hidden;
+}
+
+/* the fade sits here so a disabled button keeps its own dimmed opacity */
+.action {
+  display: flex;
+}
+
+/* chrome drops backdrop blur under a fading ancestor, so glass fades itself */
+.glassIn :global(.glass) {
+  animation: global(step-in) var(--step-in) var(--ease-out) backwards;
+}
+
+.height {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-20);
+  width: 100%;
+  max-width: 640px;
+}
+
+.readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-16);
+}
+
+.digits {
+  font-variant-numeric: tabular-nums;
+}
+
+.slider {
+  align-self: stretch;
+}
+
+.weight {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-20);
+}
+
+.weightBox {
+  position: relative;
+}
+
+.weightGlow,
+.weightInput {
+  width: 5ch;
+  font-size: 104px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* inputs clip their own text-shadow, so a copy behind the field carries the glow */
+.weightGlow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: transparent;
+  text-shadow: var(--text-glow);
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+}
+
+.weightInput {
+  position: relative;
+  display: block;
+  padding: 0 0 2px;
+  border-bottom: 1.5px solid var(--line);
+  border-radius: 0;
+  transition: border-color var(--fast) var(--ease-out);
+}
+
+.weightInput:focus {
+  border-bottom-color: #fff;
+}
+
+.prompt {
+  align-self: stretch;
+}

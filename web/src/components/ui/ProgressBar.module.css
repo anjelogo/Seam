@@ -1,0 +1,20 @@
+.bar {
+  display: flex;
+  gap: var(--gap-6);
+  width: 100%;
+}
+
+.segment {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background-color: var(--line-faint);
+  transition:
+    background-color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out);
+}
+
+.done {
+  background-color: #fff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+}

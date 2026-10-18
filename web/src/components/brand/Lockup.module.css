@@ -1,0 +1,8 @@
+.lockup {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mark {
+  flex: none;
+}

@@ -1,0 +1,13 @@
+.wordmark {
+  display: inline-block;
+  font-family: var(--font);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.glow {
+  text-shadow: 0 0 48px rgba(255, 255, 255, 0.45);
+}

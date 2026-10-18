@@ -1,0 +1,43 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-6);
+  padding: 0 28px;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  color: var(--text-on-light);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  box-shadow: var(--glow);
+  user-select: none;
+  transition:
+    box-shadow var(--fast) var(--ease-out),
+    transform var(--fast) var(--ease-out),
+    opacity var(--fast) var(--ease-out);
+}
+
+.md {
+  min-height: 48px;
+}
+
+.lg {
+  min-height: 56px;
+}
+
+.button:not(:disabled):hover {
+  box-shadow: var(--glow-strong);
+}
+
+.button:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+.button:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+  cursor: default;
+}
