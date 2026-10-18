@@ -8,9 +8,6 @@ tar -C /src --exclude=./.git --exclude=./.venv --exclude=./data --exclude=./web/
 cd /app
 
 echo "[seam] installing deps (first start takes ~2 min, ports open after)"
-# shortcut: master's uv.lock doesn't parse and perceptron needs pillow<12; drop once the lock is fixed
-sed -i 's/"pillow>=13.0.0"/"pillow>=11"/' gen3d/pyproject.toml
-uv lock -q
 uv sync --all-packages --frozen -q
 (cd web && npm ci --no-audit --no-fund --loglevel=error)
 
