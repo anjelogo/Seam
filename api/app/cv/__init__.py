@@ -1,1 +1,0 @@
-# TODO(caden): cutout + tagging
