@@ -12,6 +12,7 @@ dependencies = [
     "rembg[cpu]",
     "pillow",
     "seam-shared",
+    "anthropic>=1.15.0",
 ]
 
 [tool.uv.sources]

@@ -1,18 +1,17 @@
-import time
-from pathlib import Path
-
-from fastapi import APIRouter
+import anthropic
+from fastapi import APIRouter, HTTPException
 from seam_shared.models import OutfitResponse, StyleQuery
+
+from app.llm import curate
 
 router = APIRouter()
 
-FIXTURE = OutfitResponse.model_validate_json(
-    (Path(__file__).resolve().parents[3] / "shared/schema/fixtures/outfit_response.json").read_bytes()
-)
-
 
 @router.post("/outfits", response_model=OutfitResponse)
-async def post_outfits(query: StyleQuery) -> OutfitResponse:
-    start = time.perf_counter()
-    # TODO(caden): replace fixture with llm outfits
-    return FIXTURE.model_copy(update={"query": query, "took_ms": int((time.perf_counter() - start) * 1000)})
+def post_outfits(query: StyleQuery) -> OutfitResponse:
+    try:
+        return curate.build(query)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except anthropic.AnthropicError as e:
+        raise HTTPException(502, f"outfit llm: {e}")
