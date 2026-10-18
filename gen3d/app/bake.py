@@ -1,14 +1,16 @@
 import argparse
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
-from seam_shared.models import AssetStatus, GenJob
+from seam_shared.models import AssetStatus, Category, GenJob
 
-from app import jobs, settings
+from app import jobs, settings, store
 from app.pipeline import BACKENDS
 
 MAX_JOBS = 10
+SHOES = [c.value for c in (Category.sneakers, Category.boots, Category.shoes_other)]
 
 
 def _photo(arg: str) -> tuple[str, Path]:
@@ -17,6 +19,15 @@ def _photo(arg: str) -> tuple[str, Path]:
     if not (jobs.SAFE_ID.fullmatch(item_id.replace(":", "_")) and photo.is_file()):
         raise argparse.ArgumentTypeError(f"expected ITEM_ID=PATH to an existing file, got {arg!r}")
     return item_id, photo
+
+
+def _ready() -> list[str]:
+    # ready assets baked before the current templates, plus usable shoes not baked since
+    built = max((p.stat().st_mtime for p in jobs.TEMPLATES_DIR.glob("*.glb")), default=0.0)
+    cutoff = datetime.fromtimestamp(built, timezone.utc)
+    stamps = store.stamped()
+    ready = [i for i, (asset, at) in stamps.items() if asset.status == AssetStatus.ready and at < cutoff]
+    return ready + [i for i in store.usable(SHOES) if i not in stamps or stamps[i][1] < cutoff]
 
 
 async def _bake(todo: list[GenJob]) -> int:
@@ -34,11 +45,15 @@ def main() -> None:
     parser.add_argument("--fixtures", action="store_true", help="every item in shared/schema/fixtures")
     parser.add_argument("--image", action="append", type=_photo, default=[], metavar="ITEM_ID=PATH")
     parser.add_argument("--backend", choices=BACKENDS, default=settings.GEN3D_BACKEND)
+    parser.add_argument(
+        "--ready", action="store_true", help="ready assets older than the templates, plus usable shoes; rerun until none left"
+    )
     args = parser.parse_args()
     photos = dict(args.image)
-    ids = dict.fromkeys([*args.item_ids, *(jobs.fixture_items() if args.fixtures else ()), *photos])
-    if not ids:
-        parser.error("give item ids, --fixtures or --image")
+    ready = _ready() if args.ready else []
+    ids = dict.fromkeys([*args.item_ids, *(jobs.fixture_items() if args.fixtures else ()), *photos, *ready])
+    if not ids and not args.ready:
+        parser.error("give item ids, --fixtures, --image or --ready")
     jobs.GLB_DIR.mkdir(parents=True, exist_ok=True)
     jobs.CLEAN_DIR.mkdir(parents=True, exist_ok=True)
     todo = []
@@ -47,6 +62,11 @@ def main() -> None:
             todo.append(job)
         else:
             print(f"skip {item_id}: not found, untagged or not usable_for_3d")
+    if args.ready and not todo:
+        print("nothing to rebake")
+    elif args.ready and len(todo) > MAX_JOBS:
+        print(f"{len(todo) - MAX_JOBS} left after this run, run --ready again")
+        todo = todo[:MAX_JOBS]
     if len(todo) > MAX_JOBS:
         parser.error(f"{len(todo)} jobs, at most {MAX_JOBS} a run")
     for job in todo:
