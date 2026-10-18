@@ -55,6 +55,14 @@ def inject_texture(mesh_path: Path, texture: Image.Image, out_path: Path) -> Pat
     return write_glb(out_path, gltf, blob)
 
 
+def copy_texture(textured_path: Path, mesh_path: Path, out_path: Path) -> Path:
+    gltf, blob = read_glb(textured_path)
+    index = gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"]
+    view = gltf["bufferViews"][gltf["images"][gltf["textures"][index]["source"]]["bufferView"]]
+    start = view.get("byteOffset", 0)
+    return inject_texture(mesh_path, Image.open(io.BytesIO(bytes(blob[start : start + view["byteLength"]]))), out_path)
+
+
 def uv_layout(mesh_path: Path) -> str:
     return read_glb(mesh_path)[0]["meshes"][0].get("extras", {}).get("uv_layout", "front_back")
 

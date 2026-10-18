@@ -25,6 +25,7 @@ from app.mannequin.generator import (
     vertex_normals,
 )
 from app.mannequin.params import SLIDERS, body_params
+from app.mannequin.shoes import SHOES, shoe_mesh, shoe_uv
 
 TEMPLATE_MATERIAL = {
     "name": "garment",
@@ -262,7 +263,19 @@ def template_mesh(template_id: str, base, sliders: dict | None = None) -> tuple[
     return garment_mesh(TEMPLATES[template_id], base, sliders)
 
 
+def _export_shoe(template_id: str, base: str, path: Path) -> Path:
+    verts, faces, targets = morphs(lambda s: shoe_mesh(template_id, base, s), GARMENT_MORPHS)
+    normals, target_normals = morph_normals(verts, faces, targets)
+    uv = shoe_uv(blend(verts, targets[: len(SLIDERS)], 0.5))
+    return write_morph_glb(
+        path, f"{template_id}_{base}", verts, normals, targets, target_normals, faces, TEMPLATE_MATERIAL, uv,
+        (*SLIDERS, *GARMENT_MORPHS), {"uv_layout": "side"},
+    )
+
+
 def export_template(template_id: str, base: str, path: Path) -> Path:
+    if template_id in SHOES:
+        return _export_shoe(template_id, base, path)
     spec = TEMPLATES[template_id]
     verts, faces, targets = morphs(lambda s: garment_mesh(spec, base, s), GARMENT_MORPHS)
     normals, target_normals = morph_normals(verts, faces, targets)
