@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-17 23:05 · anjelo · gen3d
+- new run step: `cd gen3d && uv run python -m app.bake [item_id ...] [--fixtures] [--image ITEM_ID=path] [--backend fal|mock]` bakes in order, max 10 a run, to DATA_DIR/glb/<source>_<source_id>.glb (+ _fem.glb), upserts assets; --image saves the photo as data/clean/<source>_<source_id>.png
+- prebake + app.bake look up items in DATA_DIR/seam.db `items` first (tags.clean_image, else listing.images[0]; tags.category), then shared/schema/fixtures/outfit_response.json; untagged or usable_for_3d=false items are skipped
+- a running gen3d server picks up assets app.bake marked ready (POST /gen3d/jobs checks the store on a miss or failed job), no restart needed
+- action needed: none
 ## 2026-10-17 · caden · api tagging
 - new run step: `cd api && uv run python -m app.cv [limit]` tags untagged items (Mk1.5 x2 -> Gemini fallback), writes items.tags
 - clean_image = 1024² RGBA PNG at data/clean/<source>_<source_id>.png, url /static/clean/...; also written for usable_for_3d=false items

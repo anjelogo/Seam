@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import trimesh
 from app import settings
 from app.pipeline.bake import template_mesh, texture_or_mock
 
+log = logging.getLogger(__name__)
 IMAGE_TO_3D = "fal-ai/trellis-2"
 RETEXTURE = "fal-ai/trellis-2/retexture"
 TIMEOUT_S = 600
@@ -22,7 +24,12 @@ class FalBackend:
         self.client = fal_client.AsyncClient(key=settings.FAL_KEY)
 
     async def _run(self, endpoint: str, arguments: dict, out_path: Path) -> Path:
-        result = await self.client.subscribe(endpoint, arguments, client_timeout=TIMEOUT_S)
+        result = await self.client.subscribe(
+            endpoint,
+            arguments,
+            client_timeout=TIMEOUT_S,
+            on_enqueue=lambda request_id: log.info("%s request %s", endpoint, request_id),
+        )
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as http:
             response = await http.get(result["model_glb"]["url"])
             response.raise_for_status()

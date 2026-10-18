@@ -10,7 +10,18 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from PIL import Image
 from pydantic import BaseModel
-from seam_shared.models import TEMPLATE_FOR_CATEGORY, Asset3D, AssetStatus, AssetTier, BodyBase, Category, GenJob, Slot
+from seam_shared.models import (
+    TEMPLATE_FOR_CATEGORY,
+    Asset3D,
+    AssetStatus,
+    AssetTier,
+    BodyBase,
+    Category,
+    GenJob,
+    Item,
+    OutfitResponse,
+    Slot,
+)
 
 from app import settings, store
 from app.fit.fit import fit_mesh
@@ -25,6 +36,7 @@ queue: asyncio.Queue[tuple[Asset3D, GenJob]] = asyncio.Queue()
 GLB_DIR = settings.DATA_DIR / "glb"
 CLEAN_DIR = settings.DATA_DIR / "clean"
 TEMPLATES_DIR = settings.ASSETS_DIR / "templates"
+FIXTURE = settings.GEN3D_DIR.parent / "shared/schema/fixtures/outfit_response.json"
 SAFE_ID = re.compile(r"[A-Za-z0-9._-]+")
 DOWNLOAD_TIMEOUT_S = 30
 SLOT_FOR_CATEGORY = {
@@ -91,7 +103,7 @@ async def _generate(asset: Asset3D, job: GenJob) -> None:
             backend.texture_mesh(TEMPLATES_DIR / f"{asset.template_id}_masc.glb", image, glb),
             backend.texture_mesh(TEMPLATES_DIR / f"{asset.template_id}_fem.glb", image, GLB_DIR / f"{safe_id}_fem.glb"),
         )
-        # TODO(anjelo): per-base glb urls
+        # the fem file is glb_url with _fem.glb, see web modelUrlFor
         asset.glb_url = _url(glb)
     else:
         voxel = GLB_DIR / f"{safe_id}_voxel.glb"
@@ -134,12 +146,9 @@ def load() -> None:
         jobs[asset.item_id] = asset
 
 
-def submit(job: GenJob) -> Asset3D:
+def _asset(job: GenJob) -> Asset3D:
     # gen3d decides the tier; job.tier is ignored
     tier, template_id = _tier(job.category)
-    existing = jobs.get(job.item_id)
-    if existing and existing.tier == tier and existing.status != AssetStatus.failed:
-        return existing
     asset = Asset3D(
         item_id=job.item_id,
         tier=tier,
@@ -149,6 +158,41 @@ def submit(job: GenJob) -> Asset3D:
     if not SAFE_ID.fullmatch(job.item_id.replace(":", "_")):
         asset.status = AssetStatus.failed
         asset.error = f"item_id {job.item_id!r} may only contain letters, digits, ':', '.', '_' and '-'"
+    return asset
+
+
+async def bake(job: GenJob) -> Asset3D:
+    asset = _asset(job)
+    if asset.status == AssetStatus.queued:
+        await _run(asset, job)
+    return asset
+
+
+def fixture_items() -> dict[str, Item]:
+    return OutfitResponse.model_validate_json(FIXTURE.read_bytes()).items
+
+
+def job_for(item_id: str, resolution: int = 1024) -> GenJob | None:
+    item = store.item(item_id) or fixture_items().get(item_id)
+    tags = item.tags if item else None
+    if not (tags and tags.usable_for_3d):
+        return None
+    image = tags.clean_image or next(iter(item.listing.images), None)
+    if image is None:
+        return None
+    return GenJob(item_id=item_id, image_url=image.url, category=tags.category, resolution=resolution)
+
+
+def submit(job: GenJob) -> Asset3D:
+    asset = _asset(job)
+    existing = jobs.get(job.item_id)
+    if not existing or existing.status == AssetStatus.failed:
+        # app.bake writes the store directly, maybe after this server loaded it
+        stored = store.get(job.item_id)
+        if stored and stored.status == AssetStatus.ready:
+            existing = jobs[job.item_id] = stored
+    if existing and existing.tier == asset.tier and existing.status != AssetStatus.failed:
+        return existing
     jobs[job.item_id] = asset
     store.upsert(asset)
     if asset.status == AssetStatus.queued:
@@ -170,8 +214,5 @@ async def get_job(item_id: str) -> Asset3D:
 
 @router.post("/gen3d/prebake", response_model=Queued)
 async def prebake(req: Prebake) -> Queued:
-    todo = set(req.item_ids) - jobs.keys()
-    for item_id in todo:
-        # TODO(anjelo): look up real category and image
-        submit(GenJob(item_id=item_id, image_url="", category=Category.unknown, resolution=req.resolution))
-    return Queued(queued=len(todo))
+    found = (job_for(item_id, req.resolution) for item_id in set(req.item_ids) - jobs.keys())
+    return Queued(queued=sum(submit(job).status == AssetStatus.queued for job in found if job))
