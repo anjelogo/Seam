@@ -7,6 +7,13 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic>=2",
     "seam-shared",
+    "numpy>=2.4.6",
+    "trimesh>=5.1.1",
+    "scipy>=1.17.1",
+    "pillow>=13.0.0",
+    "python-dotenv>=1.2.4",
+    "fal-client>=1.0.3",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv.sources]
