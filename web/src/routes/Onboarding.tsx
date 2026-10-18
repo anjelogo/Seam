@@ -189,14 +189,18 @@ export default function Onboarding() {
           <IconChevronLeft />
         </IconButton>
         {step <= 2 && (
-          <Button size="lg" disabled={step === 2 && weight === null} onClick={next} className="step-in">
-            next
-          </Button>
+          <div className={clsx(styles.action, "step-in")}>
+            <Button size="lg" disabled={step === 2 && weight === null} onClick={next}>
+              next
+            </Button>
+          </div>
         )}
         {step === 6 && (
-          <Button size="lg" disabled={!prompt.trim()} onClick={submit} className="step-in">
-            build my look
-          </Button>
+          <div className={clsx(styles.action, "step-in")}>
+            <Button size="lg" disabled={!prompt.trim()} onClick={submit}>
+              build my look
+            </Button>
+          </div>
         )}
       </footer>
     </div>

@@ -66,6 +66,11 @@
   visibility: hidden;
 }
 
+/* the fade sits here so a disabled button keeps its own dimmed opacity */
+.action {
+  display: flex;
+}
+
 /* chrome drops backdrop blur under a fading ancestor, so glass fades itself */
 .glassIn :global(.glass) {
   animation: global(step-in) var(--step-in) var(--ease-out) backwards;
