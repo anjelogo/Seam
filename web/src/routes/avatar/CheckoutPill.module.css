@@ -1,0 +1,12 @@
+.pill {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-16);
+  padding: var(--gap-6) var(--gap-6) var(--gap-6) var(--gap-20);
+  border-radius: var(--radius-pill);
+}
+
+.summary {
+  font-weight: 700;
+  white-space: nowrap;
+}
