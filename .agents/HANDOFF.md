@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-18 · caden · api qa fixes
+- issue 2: GET /items and the /outfits pool now return only tags.usable_for_3d = true items; `?include_unusable=true` on either shows everything (debug)
+- issue 6: tags.size_normalized is on one ladder per slot: top/outer/onepiece XS S M L XL XXL, bottom W26..W40 (integer waist), shoes US<n> (e.g. US9.5), accessory null
+- existing rows are re-mapped by `cd api && uv run python -m app.cv` (runs the backfill first; no API calls if nothing is untagged); StyleQuery.sizes are mapped onto the same ladder before matching
+- action needed (anjelo): issue 6 size delta can compare size_normalized against the user's pills directly; untagged or unusable items no longer come back from /items
+
 ## 2026-10-18 00:10 · anjelo · repo
 - new run step: `docker compose -f docker/compose.yaml up --build` runs api 8000, gen3d 8001, web 5273 in one container (stop make dev first, same ports); wait for "[seam] ready" in the logs (~2 min first start)
 - it copies the checkout at start (restart to pick up edits), reads the root .env, mounts ./data read-write as DATA_DIR

@@ -8,9 +8,9 @@ router = APIRouter()
 
 
 @router.post("/outfits", response_model=OutfitResponse)
-def post_outfits(query: StyleQuery) -> OutfitResponse:
+def post_outfits(query: StyleQuery, include_unusable: bool = False) -> OutfitResponse:
     try:
-        return curate.build(query)
+        return curate.build(query, include_unusable)
     except LookupError as e:
         raise HTTPException(404, str(e))
     except anthropic.AnthropicError as e:
