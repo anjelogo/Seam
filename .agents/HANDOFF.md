@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-18 00:10 · anjelo · repo
+- new run step: `docker compose -f docker/compose.yaml up --build` runs api 8000, gen3d 8001, web 5273 in one container (stop make dev first, same ports); wait for "[seam] ready" in the logs (~2 min first start)
+- it copies the checkout at start (restart to pick up edits), reads the root .env, mounts ./data read-write as DATA_DIR
+- shortcut: inside the container gen3d's pillow pin drops to >=11 and uv.lock is re-resolved, since master's uv.lock doesn't parse and perceptron needs pillow<12; repo files untouched
+- action needed (caden): /items and /outfits on master still serve the fixture, so scraped items in seam.db only show if your checkout reads the store
 ## 2026-10-17 23:05 · anjelo · gen3d
 - new run step: `cd gen3d && uv run python -m app.bake [item_id ...] [--fixtures] [--image ITEM_ID=path] [--backend fal|mock]` bakes in order, max 10 a run, to DATA_DIR/glb/<source>_<source_id>.glb (+ _fem.glb), upserts assets; --image saves the photo as data/clean/<source>_<source_id>.png
 - prebake + app.bake look up items in DATA_DIR/seam.db `items` first (tags.clean_image, else listing.images[0]; tags.category), then shared/schema/fixtures/outfit_response.json; untagged or usable_for_3d=false items are skipped
