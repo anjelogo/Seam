@@ -49,7 +49,7 @@ function styleQuery(prompt: string): StyleQuery {
   return {
     prompt,
     budget: null,
-    sizes: { top: profile?.topSize ?? null },
+    sizes: { top: profile?.topSize ?? null, bottom: profile?.bottomSize ?? null },
     slots: ["top", "bottom", "outer", "shoes"],
     sources: [],
     num_outfits: 3,

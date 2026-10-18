@@ -13,10 +13,17 @@ export const DEFAULT_PROFILE: Profile = {
   base: "masc",
   skinTone: "#B9805A",
   topSize: "M",
+  bottomSize: "W32",
   body: { shoulders: 50, chest: 50, waist: 50, hips: 50, legs: 50 },
 };
 
 export type ProfilePatch = Partial<Omit<Profile, "body">> & { body?: Partial<Profile["body"]> };
+
+const withPatch = (profile: Profile, { body, ...rest }: ProfilePatch): Profile => ({
+  ...profile,
+  ...rest,
+  body: { ...profile.body, ...body },
+});
 
 type ProfileState = {
   profile: Profile | null;
@@ -33,15 +40,20 @@ export const useProfile = create<ProfileState>()(
       profile: null,
       dragging: false,
       setProfile: (profile) => set({ profile }),
-      patch: ({ body, ...rest }) =>
-        set(({ profile }) => {
-          const current = profile ?? DEFAULT_PROFILE;
-          return { profile: { ...current, ...rest, body: { ...current.body, ...body } } };
-        }),
+      patch: (partial) => set(({ profile }) => ({ profile: withPatch(profile ?? DEFAULT_PROFILE, partial) })),
       bodyProfile: () => profileToBody(get().profile ?? DEFAULT_PROFILE),
       setDragging: (dragging) => set({ dragging }),
     }),
-    { name: "seam.profile", storage: safeStorage, partialize: ({ profile }) => ({ profile }) },
+    {
+      name: "seam.profile",
+      storage: safeStorage,
+      partialize: ({ profile }) => ({ profile }),
+      // profiles saved by older versions lack newer fields
+      merge: (persisted, current) => {
+        const { profile } = { ...current, ...(persisted as { profile?: ProfilePatch | null }) };
+        return { ...current, profile: profile && withPatch(DEFAULT_PROFILE, profile) };
+      },
+    },
   ),
 );
 
