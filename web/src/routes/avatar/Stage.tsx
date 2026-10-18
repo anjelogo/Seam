@@ -1,3 +1,3 @@
-export function Stage() {
+export default function Stage() {
   return null;
 }

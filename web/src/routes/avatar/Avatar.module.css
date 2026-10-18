@@ -1,0 +1,66 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--gutter);
+}
+
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--target);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--gap-28);
+  min-height: 0;
+  margin-top: var(--gap-20);
+}
+
+.panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--gap-20);
+  width: clamp(360px, 32vw, 460px);
+  height: min(760px, 100%);
+}
+
+.pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
+}
+
+/* isolates drei Html z-indices so the overlays below stay on top */
+.canvas {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+}
+
+.detail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+}
+
+.checkout {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}
