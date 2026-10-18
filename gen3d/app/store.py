@@ -16,9 +16,32 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _has_items(conn: sqlite3.Connection) -> bool:
+    # the api creates the items table on its first ingest
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'").fetchone() is not None
+
+
 def load() -> list[Asset3D]:
     with closing(_connect()) as conn:
         return [Asset3D.model_validate_json(row[0]) for row in conn.execute("SELECT json FROM assets")]
+
+
+def stamped() -> dict[str, tuple[Asset3D, datetime]]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT item_id, json, updated_at FROM assets").fetchall()
+    return {item_id: (Asset3D.model_validate_json(js), datetime.fromisoformat(at)) for item_id, js, at in rows}
+
+
+def usable(categories: list[str]) -> list[str]:
+    with closing(_connect()) as conn:
+        if not _has_items(conn):
+            return []
+        marks = ", ".join("?" * len(categories))
+        rows = conn.execute(
+            f"SELECT id FROM items WHERE json_extract(tags, '$.category') IN ({marks}) AND json_extract(tags, '$.usable_for_3d')",
+            categories,
+        )
+        return [row[0] for row in rows]
 
 
 def get(item_id: str) -> Asset3D | None:
@@ -33,8 +56,7 @@ def get(item_id: str) -> Asset3D | None:
 
 def item(item_id: str) -> Item | None:
     with closing(_connect()) as conn:
-        # the api creates the items table on its first ingest
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'").fetchone():
+        if not _has_items(conn):
             return None
         row = conn.execute("SELECT listing, tags FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:

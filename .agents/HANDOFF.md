@@ -14,6 +14,13 @@ Format:
 - outer loads its open variant when a top or onepiece is worn (item `_open.glb` / `_open_fem.glb`, template `<id>_open_<base>.glb`), closed on 404; shoes fall back to shoe_v1 (boots: boot_v1)
 - stage: wheel/pinch/+- zoom and hotspot focus with return; inventory hides tags.usable_for_3d=false client-side
 - action needed (caden): none, but the /items usable filter is still wanted
+## 2026-10-18 03:40 · anjelo · gen3d
+- every template's morph targets = the 8 body sliders, then `ease`, `crop` (default 0, the web sets them 0..1); new shoe_v1/boot_v1 (one mesh, both feet); open fronts at assets/templates/jacket_v1_open_<base>.glb, coat_v1_open_<base>.glb
+- outer items also write DATA_DIR/glb/<safe>_open.glb + <safe>_open_fem.glb (same texture); TEMPLATE_FOR_CATEGORY (models.py only): sneakers, shoes_other -> shoe_v1, boots -> boot_v1, so shoes are template_textured
+- item backs are textured now; fal retexture works but needs GEN3D_BACKEND=fal (default mock, compose doesn't set it)
+- new run step: `cd gen3d && uv run python -m app.bake --ready [--backend fal]` rebakes ready assets older than the templates plus usable shoes, 10 a run, rerun until "nothing to rebake"; ran on the main checkout's data: 0 items/assets, nothing rebaked
+- action needed: none for caden
+
 ## 2026-10-18 00:10 · anjelo · repo
 - new run step: `docker compose -f docker/compose.yaml up --build` runs api 8000, gen3d 8001, web 5273 in one container (stop make dev first, same ports); wait for "[seam] ready" in the logs (~2 min first start)
 - it copies the checkout at start (restart to pick up edits), reads the root .env (ANTHROPIC_API_KEY for /outfits), mounts ./data read-write as DATA_DIR so the scraped seam.db and images are used

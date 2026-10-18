@@ -27,6 +27,8 @@ type LookState = {
   clearError(): void;
 };
 
+type Dressed = Pick<LookState, "items" | "outfits" | "worn" | "assets" | "saved">;
+
 const SAVED_LIMIT = 12;
 const converting = new Set<string>();
 let buildSeq = 0;
@@ -60,7 +62,9 @@ function styleQuery(prompt: string): StyleQuery {
   };
 }
 
-function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Partial<LookState> | null {
+export const requestOutfits = (prompt: string) => postOutfits(styleQuery(prompt));
+
+function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Dressed | null {
   const outfit = res.outfits[0];
   if (!outfit) return null;
   const items = { ...state.items, ...res.items };
@@ -76,6 +80,15 @@ function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Part
   const saved = [{ prompt, itemIds: worn }, ...others].slice(0, SAVED_LIMIT);
   return { items, outfits: res.outfits, worn, assets, saved };
 }
+
+export function applyOutfit(prompt: string, res: OutfitResponse): string[] | null {
+  const next = wearOutfit(useLook.getState(), prompt, res);
+  if (!next) return null;
+  useLook.setState({ ...next, prompt });
+  return next.worn;
+}
+
+export const conversionPending = (id: string) => converting.has(id);
 
 const setAsset = (id: string, asset: Asset3D) => useLook.setState((s) => ({ assets: { ...s.assets, [id]: asset } }));
 
@@ -112,7 +125,7 @@ export const useLook = create<LookState>()(
         const seq = ++buildSeq;
         set({ building: true, lastError: null, prompt });
         try {
-          const res = await postOutfits(styleQuery(prompt));
+          const res = await requestOutfits(prompt);
           if (seq !== buildSeq) return;
           const next = wearOutfit(get(), prompt, res);
           if (!next) {
