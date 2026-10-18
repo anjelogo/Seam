@@ -1,0 +1,15 @@
+/* inset gives focus rings and thumb glow room inside the scroller */
+.pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--gap-6);
+  min-height: 0;
+  margin: -12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.base {
+  margin-bottom: var(--gap-12);
+}
