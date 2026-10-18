@@ -17,6 +17,8 @@ export type UiItem = {
   imageUrl: string;
   listingUrl: string;
   modelUrl?: string;
+  templateId?: string;
+  color?: string;
   anchor?: [number, number, number];
   usableFor3d: boolean;
   followsBodyMorphs: boolean;
@@ -91,6 +93,8 @@ export function toUiItem(item: Item, base: BodyBase, asset?: Asset3D | null): Ui
     imageUrl: tags.clean_image?.url ?? listing.images[0]?.url ?? "",
     listingUrl: listing.url,
     modelUrl: modelUrlFor(current, base),
+    templateId: current?.template_id ?? undefined,
+    color: [...tags.colors].sort((a, b) => b.ratio - a.ratio)[0]?.hex,
     usableFor3d: tags.usable_for_3d,
     followsBodyMorphs: current?.follows_body_morphs ?? false,
     fit: current?.fit,
