@@ -1,0 +1,211 @@
+.slot {
+  --ease-card: cubic-bezier(0.2, 0.7, 0.2, 1);
+  min-width: 0;
+  animation: card-in 300ms var(--ease-card) backwards;
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  perspective: 900px;
+  transform: scale(1);
+  transition:
+    opacity 500ms var(--ease-card),
+    transform 500ms var(--ease-card),
+    visibility 0s;
+}
+
+.picked {
+  transform: scale(1.06);
+}
+
+.dim {
+  opacity: 0.18;
+  transform: scale(0.88);
+}
+
+.gone {
+  visibility: hidden;
+  opacity: 0;
+  transform: scale(0.88);
+  transition:
+    opacity 500ms var(--ease-card),
+    transform 500ms var(--ease-card),
+    visibility 0s 500ms;
+}
+
+.waiting,
+.building,
+.ready,
+.failed {
+  transform: scale(1.04);
+}
+
+.flipper {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 800ms var(--ease-card);
+}
+
+.flipped {
+  transform: rotateY(180deg);
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.front {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  transition:
+    border-color 500ms var(--ease-card),
+    box-shadow 500ms var(--ease-card);
+}
+
+.picked .front {
+  border-color: #fff;
+  box-shadow: 0 0 28px rgba(255, 255, 255, 0.45);
+}
+
+.photo {
+  position: relative;
+  flex: none;
+  height: 74%;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.07) 0 10px,
+    rgba(255, 255, 255, 0.03) 10px 20px
+  );
+}
+
+.image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cutout {
+  padding: 10px;
+  object-fit: contain;
+}
+
+.silhouette {
+  position: absolute;
+  top: 19%;
+  left: 19%;
+  width: 62%;
+  height: 62%;
+}
+
+.tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  max-width: calc(100% - 16px);
+  padding: 3px 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: rgba(6, 14, 32, 0.6);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.twoD {
+  right: 8px;
+  left: auto;
+}
+
+/* margin, not padding, so the clamp never shows part of a third line */
+.name {
+  display: -webkit-box;
+  margin: 8px 10px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* no backdrop-filter: chrome mis-renders it inside 3d flips */
+.back {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 0 28px rgba(255, 255, 255, 0.3);
+  transform: rotateY(180deg);
+}
+
+.meter {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  height: 22px;
+}
+
+.bar {
+  width: 70%;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
+  transition: width 200ms linear;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.6);
+  color: var(--text-on-light);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flipper {
+    transition: none;
+  }
+}

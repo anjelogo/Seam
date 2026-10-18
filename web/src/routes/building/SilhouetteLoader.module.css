@@ -1,0 +1,68 @@
+@property --d {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+.loader {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+  perspective: 4em;
+  filter: drop-shadow(0 0 0.12em rgba(255, 255, 255, 0.55));
+}
+
+.stack {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.slice {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: translateZ(calc(var(--d) * var(--i) * -1));
+}
+
+.animate {
+  animation: spread 2.8s var(--ease-in-out) infinite;
+}
+
+@keyframes spread {
+  0%,
+  12% {
+    --d: 0em;
+    transform: rotateY(0deg) rotateX(0deg);
+  }
+
+  34% {
+    --d: 0.03em;
+    transform: rotateY(0deg) rotateX(0deg);
+  }
+
+  60% {
+    --d: 0.03em;
+    transform: rotateY(-42deg) rotateX(14deg);
+  }
+
+  80% {
+    --d: 0.03em;
+    transform: rotateY(32deg) rotateX(8deg);
+  }
+
+  100% {
+    --d: 0em;
+    transform: rotateY(0deg) rotateX(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate {
+    animation: none;
+  }
+}
