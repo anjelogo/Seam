@@ -1,0 +1,140 @@
+.node {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition: opacity var(--fast) var(--ease-out);
+}
+
+.node:focus-visible {
+  outline: none;
+}
+
+.node:focus-visible .label {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.away {
+  opacity: 0.25;
+}
+
+.away:focus-visible {
+  opacity: 1;
+}
+
+.dot,
+.label {
+  pointer-events: auto;
+}
+
+.away .dot,
+.away .label {
+  pointer-events: none;
+}
+
+.dot {
+  position: absolute;
+  top: -22px;
+  left: -22px;
+  width: var(--target);
+  height: var(--target);
+}
+
+.dot::before,
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+}
+
+.dot::before {
+  background-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.55);
+  transition:
+    background-color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out);
+}
+
+.dot::after {
+  opacity: 0;
+  animation: pulse 2.4s var(--ease-out) infinite;
+}
+
+.selected .dot::before {
+  background-color: #fff;
+  box-shadow: var(--glow);
+}
+
+.line {
+  position: absolute;
+  top: -0.5px;
+  left: 0;
+  height: 1px;
+  background: var(--line);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+  transform-origin: 0 50%;
+}
+
+.label {
+  position: absolute;
+  padding: 7px 12px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  transition:
+    border-color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out),
+    color var(--select) var(--ease-out);
+}
+
+/* white fill under the text; the transform makes the label a stacking context */
+.label::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: #fff;
+  opacity: 0;
+  transition: opacity var(--select) var(--ease-out);
+}
+
+/* 44 px tall hit area */
+.label::after {
+  content: "";
+  position: absolute;
+  inset: -7px -4px;
+}
+
+.selected .label {
+  border-color: #fff;
+  color: var(--text-on-light);
+  box-shadow: var(--glow);
+}
+
+.selected .label::before {
+  opacity: 1;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot::after {
+    animation: none;
+  }
+}
