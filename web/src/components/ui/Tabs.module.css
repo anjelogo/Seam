@@ -1,0 +1,34 @@
+.tabs {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+}
+
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--target);
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color var(--select) var(--ease-out),
+    color var(--select) var(--ease-out),
+    box-shadow var(--select) var(--ease-out);
+}
+
+.tab:not(.selected):hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.selected {
+  background-color: #fff;
+  color: var(--text-on-light);
+  box-shadow: var(--glow);
+}
