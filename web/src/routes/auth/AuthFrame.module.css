@@ -1,0 +1,103 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--gutter);
+}
+
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--target);
+}
+
+.main {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  padding-bottom: var(--target);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 480px;
+  padding: 40px;
+  border-radius: var(--radius-auth);
+}
+
+.title {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-28);
+  margin-top: var(--gap-28);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-16);
+  margin-top: 40px;
+}
+
+.link {
+  margin-left: auto;
+}
+
+.shakeOdd {
+  animation: shake-odd 300ms ease-in-out;
+}
+
+.shakeEven {
+  animation: shake-even 300ms ease-in-out;
+}
+
+/* two names so every failed attempt restarts the shake */
+@keyframes shake-odd {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translateX(-10px);
+  }
+  40% {
+    transform: translateX(10px);
+  }
+  60% {
+    transform: translateX(-6px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes shake-even {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translateX(-10px);
+  }
+  40% {
+    transform: translateX(10px);
+  }
+  60% {
+    transform: translateX(-6px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}

@@ -166,7 +166,7 @@ a {
 }
 
 .step-in {
-  animation: step-in var(--step-in) var(--ease-out) both;
+  animation: step-in var(--step-in) var(--ease-out) backwards;
 }
 
 @keyframes step-in {
