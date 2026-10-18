@@ -1,4 +1,7 @@
+import asyncio
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 
 from fastapi import FastAPI, Request
@@ -9,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from seam_shared.models import ApiError
 from starlette.exceptions import HTTPException
 
-from app import jobs
+from app import jobs, settings
 from app.routes import health
 
 
@@ -24,9 +27,18 @@ async def validation_error(_: Request, exc: RequestValidationError) -> JSONRespo
     return JSONResponse(body.model_dump(), status_code=422)
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    jobs.load()
+    worker = asyncio.create_task(jobs.worker())
+    yield
+    worker.cancel()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="seam gen3d",
+        lifespan=lifespan,
         exception_handlers={HTTPException: http_error, RequestValidationError: validation_error},
     )
     app.add_middleware(
@@ -37,7 +49,9 @@ def create_app() -> FastAPI:
     )
     for module in (health, jobs):
         app.include_router(module.router)
-    app.mount("/static", StaticFiles(directory=os.getenv("DATA_DIR", "../data")), name="static")
+    # only public folders: DATA_DIR also holds seam.db
+    for sub in ("clean", "glb", "thumb"):
+        app.mount(f"/static/{sub}", StaticFiles(directory=settings.DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
     return app
 
 
