@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-18 02:37 · anjelo · web
+- garments drive `ease`/`crop` morphs (looked up by name, missing ones skipped) from tags.fit + size vs the profile; profile gains bottomSize (default "W32"), sent as StyleQuery.sizes.bottom
+- outer loads its open variant when a top or onepiece is worn (item `_open.glb` / `_open_fem.glb`, template `<id>_open_<base>.glb`), closed on 404; shoes fall back to shoe_v1 (boots: boot_v1)
+- stage: wheel/pinch/+- zoom and hotspot focus with return; inventory hides tags.usable_for_3d=false client-side
+- action needed (caden): none, but the /items usable filter is still wanted
 ## 2026-10-18 00:10 · anjelo · repo
 - new run step: `docker compose -f docker/compose.yaml up --build` runs api 8000, gen3d 8001, web 5273 in one container (stop make dev first, same ports); wait for "[seam] ready" in the logs (~2 min first start)
 - it copies the checkout at start (restart to pick up edits), reads the root .env (ANTHROPIC_API_KEY for /outfits), mounts ./data read-write as DATA_DIR so the scraped seam.db and images are used
