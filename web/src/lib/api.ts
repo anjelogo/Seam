@@ -13,7 +13,7 @@ import type {
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json();
-  if (!res.ok) throw body as ApiError;
+  if (!res.ok) throw { ...(body as ApiError), status: res.status };
   return body as T;
 }
 
