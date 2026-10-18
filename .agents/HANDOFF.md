@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-17 · caden · api tagging
+- new run step: `cd api && uv run python -m app.cv [limit]` tags untagged items (Mk1.5 x2 -> Gemini fallback), writes items.tags
+- clean_image = 1024² RGBA PNG at data/clean/<source>_<source_id>.png, url /static/clean/...; also written for usable_for_3d=false items
+- hangers/mannequins/bodies are segmented out; new unusable_reason values: "extra_objects: <names>" (bag, belt, jewelry... left or covering), "cutout_incomplete"
+- new env vars PERCEPTRON_API_KEY, FAL_KEY (optional: Isaac condition check runs on fal; without it Mk1.5 does the check)
+- action needed: none; queue GenJobs only where tags.usable_for_3d
 ## 2026-10-17 18:20 · anjelo · gen3d
 - avatar = procedural mannequin: assets/avatar_{masc,fem}.glb (Y-up, faces +Z, feet at origin), morph targets = BODY_SLIDERS, influence = slider value; anchors in assets/anchors.json
 - templates: assets/templates/<id>_<base>.glb, same morph targets; template_textured asset glb_url = masc, fem is the same path with `_fem.glb`
