@@ -17,15 +17,10 @@ def list_items(
     offset: Annotated[int, Query(ge=0)] = 0,
     include_unusable: bool = False,
 ) -> ItemsResponse:
-    filters = dict(slot=slot, category=category, q=q, max_cents=max_cents)
+    usable_3d = None if include_unusable else True
     with db.pool().connection() as conn:
-        if include_unusable:
-            hits, total = db.get_items(conn, **filters, limit=limit, offset=offset)
-            return ItemsResponse(items=hits, total=total)
-        # shortcut: usable filter runs in Python over every match; push into db.get_items once it takes usable_3d
-        hits, _ = db.get_items(conn, **filters, limit=None)
-    usable = [i for i in hits if i.tags and i.tags.usable_for_3d]
-    return ItemsResponse(items=usable[offset : offset + limit], total=len(usable))
+        hits, total = db.get_items(conn, slot=slot, category=category, q=q, max_cents=max_cents, usable_3d=usable_3d, limit=limit, offset=offset)
+    return ItemsResponse(items=hits, total=total)
 
 
 @router.get("/items/{item_id}", response_model=Item)

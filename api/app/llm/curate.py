@@ -55,8 +55,8 @@ def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str, include_
     pools = {}
     for slot in query.slots:
         size = sizes.ladder(slot, wanted.get(slot))
-        found, _ = db.get_items(conn, slot=slot, sources=query.sources or None, max_cents=cap, require_3d_ready=query.require_3d_ready, limit=None)
-        hits = [i for i in found if include_unusable or i.tags.usable_for_3d]
+        hits, _ = db.get_items(conn, slot=slot, sources=query.sources or None, max_cents=cap, require_3d_ready=query.require_3d_ready,
+                               usable_3d=None if include_unusable else True, limit=None)
 
         # shortcut: size match ranks first instead of filtering so a thin slot still fills; filter hard once inventory is a few hundred per slot
         def rank(i: Item):
