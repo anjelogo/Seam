@@ -89,10 +89,11 @@ async def scrape_all(timestamp: int = 0):
     queries = [q.strip() for q in (os.getenv("SCRAPE_QUERIES") or "vintage").split(",") if q.strip()]
     pages = int(os.getenv("SCRAPE_PAGES") or 1)
     deferred = 0
-    for source in ADAPTERS:
-        for query in queries:
-            for slot in SEED_SLOTS:
-                for page in range(pages):
+    # source innermost: jobs run in queue order, so this keeps every source busy at once
+    for query in queries:
+        for slot in SEED_SLOTS:
+            for page in range(pages):
+                for source in ADAPTERS:
                     lock = f"{source.value}:{query}:{slot.value}:{page}"
                     try:
                         await scrape.configure(queueing_lock=lock).defer_async(source=source.value, query=query, slot=slot.value, page=page)

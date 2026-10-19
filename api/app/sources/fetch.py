@@ -67,13 +67,16 @@ def _env_int(name: str, default: int) -> int:
 
 
 class _Gate:
-    def __init__(self):
+    def __init__(self, paced: bool):
         self.sem = asyncio.Semaphore(max(1, _env_int("SCRAPE_CONCURRENCY_PER_SOURCE", 3)))
         self.lock = asyncio.Lock()
         self.next_start = 0.0
+        self.paced = paced
 
     async def __aenter__(self):
         await self.sem.acquire()
+        if not self.paced:
+            return
         try:
             async with self.lock:
                 wait = self.next_start - time.monotonic()
@@ -93,7 +96,7 @@ class _Gate:
 class _State:
     session: AsyncSession
     proxy: str
-    gates: dict[Source, _Gate] = field(default_factory=dict)
+    gates: dict[tuple[Source, bool], _Gate] = field(default_factory=dict)
     clearance: dict[str, flaresolverr.Clearance] = field(default_factory=dict)
 
 
@@ -112,10 +115,10 @@ def _state() -> _State:
     return st
 
 
-def _gate(st: _State, source: Source) -> _Gate:
-    if source not in st.gates:
-        st.gates[source] = _Gate()
-    return st.gates[source]
+def _gate(st: _State, source: Source, paced: bool) -> _Gate:
+    if (source, paced) not in st.gates:
+        st.gates[source, paced] = _Gate(paced)
+    return st.gates[source, paced]
 
 
 def _is_challenge(status: int, headers: Mapping[str, str], body: bytes) -> bool:
@@ -144,7 +147,7 @@ async def _blocked(st: _State, msg: str) -> BlockedError:
     return BlockedError(msg)
 
 
-async def fetch(url, *, source: Source, method="GET", params=None, json=None, headers=None) -> FetchResult:
+async def fetch(url, *, source: Source, method="GET", params=None, json=None, headers=None, paced=True) -> FetchResult:
     global _blocked_streak
     st = _state()
     domain = urlsplit(url).hostname or ""
@@ -157,7 +160,7 @@ async def fetch(url, *, source: Source, method="GET", params=None, json=None, he
             h["User-Agent"] = clear.user_agent
         retry_after = None
         try:
-            async with _gate(st, source):
+            async with _gate(st, source, paced):
                 r = await st.session.request(
                     method, url, params=params, json=json, headers=h,
                     cookies=clear.cookies if clear else None, timeout=TIMEOUT,
@@ -192,6 +195,7 @@ async def fetch(url, *, source: Source, method="GET", params=None, json=None, he
 
 
 async def fetch_bytes(url, *, source: Source) -> tuple[bytes, str]:
-    r = await fetch(url, source=source)
+    # photos come off image CDNs: own in-flight cap, no spacing, so they don't queue behind page requests
+    r = await fetch(url, source=source, paced=False)
     r.raise_for_status()
     return r.content, r.headers.get("content-type") or ""
