@@ -4,6 +4,8 @@ WORKDIR /app
 COPY web/package.json web/package-lock.json web/
 RUN cd web && npm ci --no-audit --no-fund --loglevel=error
 COPY shared/schema shared/schema
+# web/public/assets is a symlink to the repo-root assets/
+COPY assets assets
 COPY web web
 RUN cd web && npm run build
 
