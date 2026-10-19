@@ -1,8 +1,8 @@
-# one image for both python services (api + gen3d), built from the repo root
+# one image for every python service (migrate, api, gen3d, workers), built from the repo root
 # no BuildKit cache mounts, so it also builds on plain docker.io / legacy builders inside an LXC
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:0.12.7-python3.12-trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgl1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0t64 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV UV_LINK_MODE=copy \
@@ -14,7 +14,7 @@ ENV UV_LINK_MODE=copy \
 WORKDIR /app
 
 # deps first so code edits don't reinstall everything
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock .python-version ./
 COPY shared/pyproject.toml shared/
 COPY api/pyproject.toml api/
 COPY gen3d/pyproject.toml gen3d/

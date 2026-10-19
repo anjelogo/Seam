@@ -1,2 +1,7 @@
 [tool.uv.workspace]
 members = ["shared", "api", "gen3d"]
+
+# ruff 0.17 widened its defaults; keep the classic set the code was written against
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+per-file-ignores = { "shared/seam_shared/models.py" = ["F403"] }

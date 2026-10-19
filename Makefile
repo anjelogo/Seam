@@ -1,4 +1,4 @@
-.PHONY: install dev api gen3d web
+.PHONY: install dev api gen3d web db psql
 
 install:
 	uv sync --all-packages
@@ -15,3 +15,9 @@ gen3d:
 
 web:
 	cd web && npm run dev
+
+db:
+	docker compose --profile dev up -d postgres && docker compose --profile dev run --rm migrate
+
+psql:
+	docker compose exec postgres psql -U seam seam

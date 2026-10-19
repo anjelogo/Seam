@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # One-shot setup for a Debian/Ubuntu LXC (Proxmox). Run as root from anywhere in the repo:
-#   bash docker/prod/ct-setup.sh
+#   bash docker/ct-setup.sh
 # Proxmox host side, before running (CT stopped):
 #   pct set <ctid> --features nesting=1,keyctl=1   # docker needs both in an unprivileged CT
 #   give it >= 4 GB RAM and ~15 GB disk (rembg/onnx + python wheels)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-COMPOSE=(docker compose -f "$ROOT/docker/prod/compose.yaml")
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+COMPOSE=(docker compose --project-directory "$ROOT" --profile prod)
 cd "$ROOT"
 
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
@@ -30,9 +30,10 @@ fi
 [ -f .env ] || { cp .env.example .env; echo "[seam] created .env from .env.example, fill in keys then rerun"; exit 1; }
 grep -q '^FAL_KEY=.\+' .env || echo "[seam] warning: FAL_KEY empty in .env"
 grep -q '^GEN3D_BACKEND=fal' .env || echo "[seam] warning: GEN3D_BACKEND is not fal, gen3d will serve mock models"
+grep -q '^POSTGRES_PASSWORD=.\+' .env || { echo "[seam] set POSTGRES_PASSWORD in .env (openssl rand -hex 24), then rerun"; exit 1; }
+grep -q '^POSTGRES_PASSWORD=seam$' .env && echo "[seam] warning: POSTGRES_PASSWORD is the dev default, set a strong one"
 
 mkdir -p data/raw data/clean data/glb data/thumb
-[ -f data/seam.db ] || echo "[seam] warning: data/seam.db missing, copy it over: scp -r <laptop>:~/Github/Seam/data/. $ROOT/data/"
 
 "${COMPOSE[@]}" up --build -d
 

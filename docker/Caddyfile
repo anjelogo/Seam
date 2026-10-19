@@ -7,8 +7,12 @@
 		reverse_proxy api:8000
 	}
 
-	# gen3d routes already start with /gen3d
+	# gen3d routes already start with /gen3d; logged-in users only
 	handle /gen3d/* {
+		forward_auth api:8000 {
+			uri /auth/check
+			copy_headers X-User-Id
+		}
 		reverse_proxy gen3d:8001
 	}
 

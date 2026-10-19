@@ -8,5 +8,5 @@ COPY web web
 RUN cd web && npm run build
 
 FROM caddy:2-alpine
-COPY docker/prod/Caddyfile /etc/caddy/Caddyfile
+COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/web/dist /srv

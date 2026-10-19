@@ -6,7 +6,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from rembg import new_session, remove
 from seam_shared.models import Category, ImageRef, ImageView
 
-from app import db
+from app.settings import DATA_DIR
 
 SIZE = 1024
 MAX_POINTS = 12
@@ -77,7 +77,9 @@ def cutout(item_id: str, path: str, box: tuple[float, float, float, float], view
         prompt = [{"type": "point", "data": [x, y], "label": 1} for x, y in keep] + [{"type": "point", "data": [x, y], "label": 0} for x, y, _ in extras]
         region = _fill_holes(remove(img, session=_session("sam"), sam_prompt=prompt).getchannel("A"))
         cleaned = ImageChops.multiply(edges, region.filter(ImageFilter.MaxFilter(7)))
-        fg = lambda m: sum(1 for v in m.getdata() if v > 127)
+        def fg(m: Image.Image) -> int:
+            return sum(1 for v in m.getdata() if v > 127)
+
         inner = cleaned.filter(ImageFilter.MinFilter(9))
         survived = {name for x, y, name in extras if inner.getpixel((int(x), int(y))) > 127}
         covering = {name for _, _, name in extras if not any(k in name.lower() for k in REMOVABLE)}
@@ -95,7 +97,7 @@ def cutout(item_id: str, path: str, box: tuple[float, float, float, float], view
     square.paste(rgba, ((side - rgba.width) // 2, (side - rgba.height) // 2))
     square = square.resize((SIZE, SIZE), Image.LANCZOS)
     name = item_id.replace(":", "_") + ".png"
-    out = db.DATA_DIR / "clean" / name
+    out = DATA_DIR / "clean" / name
     out.parent.mkdir(parents=True, exist_ok=True)
     square.save(out)
     ref = ImageRef(url=f"/static/clean/{name}", local_path=str(out), width=SIZE, height=SIZE, view=view)

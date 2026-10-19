@@ -9,8 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from seam_shared.models import ApiError
 from starlette.exceptions import HTTPException
 
-from app import db
-from app.routes import health, ingest, items, outfits
+from app.routes import health, items, outfits
+from app.settings import DATA_DIR
 
 
 async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
@@ -35,10 +35,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for module in (health, outfits, items, ingest):
+    for module in (health, outfits, items):
         app.include_router(module.router)
     for sub in ("raw", "clean", "glb", "thumb"):
-        app.mount(f"/static/{sub}", StaticFiles(directory=db.DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
+        app.mount(f"/static/{sub}", StaticFiles(directory=DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
     return app
 
 
