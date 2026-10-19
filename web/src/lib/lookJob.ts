@@ -55,7 +55,7 @@ export type BuildView = {
 };
 
 // the only stores we scrape
-export const STORE_SOURCES = ["ebay", "poshmark", "grailed"];
+export const STORE_SOURCES = ["ebay", "depop", "poshmark", "grailed"];
 
 export const MAX_CARDS = 12;
 
