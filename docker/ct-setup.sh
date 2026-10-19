@@ -37,6 +37,7 @@ mkdir -p data/raw data/clean data/glb data/thumb
 
 "${COMPOSE[@]}" up --build -d
 
+grep -q '^TUNNEL_TOKEN=.\+' .env && { echo "[seam] live on your tunnel's hostname"; exit 0; }
 echo "[seam] waiting for tunnel URL..."
 for _ in $(seq 60); do
   url=$("${COMPOSE[@]}" logs tunnel 2>/dev/null | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 || true)

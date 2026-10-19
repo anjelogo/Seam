@@ -9,6 +9,10 @@ Format:
 
 ---
 
+## 2026-10-18 23:25 · anjelo · repo tunnel
+- new optional env var TUNNEL_TOKEN: set = cloudflared runs your Cloudflare dashboard tunnel (point its public hostname at http://web:80), empty = quick tunnel on a random trycloudflare.com URL as before
+- with a hostname, add its https origin to PUBLIC_ORIGINS (comma list) or logins through it get 403; apply with `docker compose --profile prod up -d tunnel api`
+- action needed: none
 ## 2026-10-18 22:45 · anjelo · repo run steps
 - Postgres replaces SQLite (data/seam.db is gone, nothing migrated): `make db` starts postgres on 127.0.0.1:5432 and applies shared/migrations, `make psql` opens a shell, then `make dev` on the host as before
 - one root compose.yaml: `docker compose --profile dev up --build` (one-container dev stack + postgres) or `docker compose --profile prod up --build -d` (api, gen3d, worker, worker-cv, caddy on :8080, tunnel); in a Proxmox LXC run `bash docker/ct-setup.sh`

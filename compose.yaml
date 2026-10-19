@@ -125,14 +125,12 @@ services:
       api: { condition: service_healthy }
       gen3d: { condition: service_healthy }
 
-  # Quick tunnel: random https://*.trycloudflare.com URL, no account needed.
-  # For a fixed hostname, create a tunnel in the Cloudflare dashboard pointing at http://web:80,
-  # put TUNNEL_TOKEN=... in .env and swap the command for: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+  # TUNNEL_TOKEN set: dashboard tunnel (fixed hostname -> http://web:80); empty: quick tunnel on a random trycloudflare.com URL
   tunnel:
     profiles: [prod]
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
-    command: tunnel --no-autoupdate --url http://web:80
+    command: tunnel --no-autoupdate ${TUNNEL_TOKEN:+run --token} ${TUNNEL_TOKEN:---url http://web:80}
     depends_on: [web]
     logging: *logs
 
