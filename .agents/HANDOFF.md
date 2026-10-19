@@ -12,7 +12,7 @@ Format:
 ## 2026-10-19 13:10 · anjelo · api depop + cv memory
 - new adapter Source.depop (app/sources/depop.py): parses the www.depop.com/search/ page (Next.js flight data), first 24 results per query only (page>0 returns []), q = query + SLOT_WORD; title = first line of the description (depop has no title); seller not in the search data; robots.txt disallows /search/* and Depop's ToS bans scraping, risk accepted by anjelo
 - web STORE_SOURCES gains depop (building screen chips), in BUILDING_SPEC order
-- one tag job peaks ~11.5 GB RAM (birefnet ~7.8 GB + SAM), ~53 s per item on the CT's 4 cores; CV_CONCURRENCY default is now 1 (was 4, which OOM-killed worker-cv in a loop); tagging can't run on an 8 GB laptop
+- one tag job peaks ~11.5 GB RAM (birefnet ~7.8 GB + SAM), ~53 s per item on the CT's 4 cores; CV_CONCURRENCY default is now 1 (was 4, which OOM-killed worker-cv in a loop); each tag job runs in its own spawned process so the memory comes back after every item; tagging can't run on an 8 GB laptop
 - action needed (caden): if you touch cutout.py, onnxruntime memory (cpu mem arena, input size) is the lever for running more than one cv job
 ## 2026-10-19 12:20 · anjelo · repo gluetun + scraping speed
 - new opt-in compose profile `vpn`: Seam's own gluetun (qmcgaw/gluetun:v3, HTTP proxy :8888, control :8000, compose network only); provider settings go in a gitignored gluetun.env next to .env; the CT needs /dev/net/tun (`pct set <ctid> -dev0 /dev/net/tun`)

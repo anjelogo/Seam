@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import mimetypes
+import multiprocessing
 import os
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from procrastinate import RetryStrategy
 from procrastinate.exceptions import AlreadyEnqueued
@@ -75,11 +78,29 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
         log.info("scrape %s %r %s p%d: fetched=%d added=%d updated=%d errors=%d", source, query, slot, page, fetched, added, updated, errors)
 
 
-@app.task(queue="cv")
-async def tag(item_id: str):
+_cv_pool: ProcessPoolExecutor | None = None
+
+
+def _tag_one(item_id: str) -> bool:
     from app.cv.run import tag_one  # keeps cv deps out of the scrape worker
 
-    if not await asyncio.to_thread(tag_one, item_id):
+    return tag_one(item_id)
+
+
+@app.task(queue="cv")
+async def tag(item_id: str):
+    global _cv_pool
+    if _cv_pool is None:
+        # one fresh process per job: onnxruntime holds a job's ~11 GB peak until its process exits
+        _cv_pool = ProcessPoolExecutor(
+            int(os.getenv("CV_CONCURRENCY") or 1), mp_context=multiprocessing.get_context("spawn"), max_tasks_per_child=1
+        )
+    try:
+        ok = await asyncio.get_running_loop().run_in_executor(_cv_pool, _tag_one, item_id)
+    except BrokenProcessPool:
+        _cv_pool = None  # a child died (OOM): this job fails, the next one gets a new pool
+        raise
+    if not ok:
         log.warning("tag %s: not tagged", item_id)
 
 
