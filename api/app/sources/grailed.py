@@ -1,9 +1,9 @@
-import time
+import asyncio
 from typing import Optional
 
 from seam_shared.models import Condition, ImageRef, Listing, Money, Slot, Source
 
-from app.sources import client
+from app.sources.fetch import fetch
 
 # public search-only key served to every visitor in grailed.com's PUBLIC_CONFIG
 ALGOLIA = "https://MNRWEFSS2Q-dsn.algolia.net/1/indexes/Listing_by_heat_production/query"
@@ -26,19 +26,19 @@ CONDITION = {
 }
 
 
-def search(query: str, slot: Optional[Slot], limit: int) -> list[Listing]:
-    body = {"query": query, "hitsPerPage": limit}
+async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) -> list[Listing]:
+    body = {"query": query, "hitsPerPage": limit, "page": page}
     if slot:
         body["facetFilters"] = [[f"category:{c}" for c in CATEGORIES[slot]]]
-    r = client.post(ALGOLIA, headers=ALGOLIA_HEADERS, json=body)
+    r = await fetch(ALGOLIA, source=Source.grailed, method="POST", headers=ALGOLIA_HEADERS, json=body)
     r.raise_for_status()
-    return [_listing(h) for h in r.json()["hits"] if not h.get("sold") and not h.get("deleted")]
+    hits = [h for h in r.json()["hits"] if not h.get("sold") and not h.get("deleted")]
+    return list(await asyncio.gather(*(_listing(h) for h in hits)))
 
 
-def _listing(hit: dict) -> Listing:
+async def _listing(hit: dict) -> Listing:
     # search hits carry only the cover photo; the detail endpoint has all photos and the description
-    time.sleep(0.5)
-    r = client.get(f"https://www.grailed.com/api/listings/{hit['id']}")
+    r = await fetch(f"https://www.grailed.com/api/listings/{hit['id']}", source=Source.grailed)
     r.raise_for_status()
     detail = r.json()["data"]
     us = (hit.get("shipping") or {}).get("us") or {}

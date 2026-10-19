@@ -2,7 +2,6 @@ import base64
 import io
 import json
 import os
-from pathlib import Path
 from typing import Optional
 
 from PIL import Image
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field
 from seam_shared.models import Category, Color, Condition, Fit, ImageView, ItemTags, Listing, Money, Slot
 
 from app.cv import sizes
-from app.sources import client as http
+from app.sources.fetch import api_client as http
 
 MAX_IMAGES = 8
 GEMINI_MODEL = "gemini-3.8-flash"
