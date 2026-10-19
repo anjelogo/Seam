@@ -7,21 +7,29 @@ from app.glb import add_accessor, new_gltf, write_glb
 from app.mannequin.generator import body_mesh, vertex_normals
 from app.mannequin.params import SLIDERS
 
-ZERO = dict.fromkeys(SLIDERS, 0.0)
+ZERO, MID = dict.fromkeys(SLIDERS, 0.0), dict.fromkeys(SLIDERS, 0.5)
+# garment-only targets after the body sliders, default influence 0
+GARMENT_MORPHS = ("ease", "crop")
 AVATAR_MATERIAL = {
     "name": "mannequin",
     "pbrMetallicRoughness": {"baseColorFactor": [0.78, 0.78, 0.78, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.85},
 }
 
 
-def morphs(build: Callable[[dict], tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def morphs(
+    build: Callable[[dict], tuple[np.ndarray, np.ndarray]], extra: tuple[str, ...] = ()
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     base, faces = build(ZERO)
-    targets = np.stack([build({**ZERO, k: 1.0})[0] for k in SLIDERS]) - base
-    return base, faces, targets
+    targets = [build({**ZERO, k: 1.0})[0] - base for k in SLIDERS]
+    if extra:
+        # garment morphs are measured on the middle body, the one seen most
+        mid = build(MID)[0]
+        targets += [build({**MID, k: 1.0})[0] - mid for k in extra]
+    return base, faces, np.stack(targets)
 
 
 def blend(base: np.ndarray, targets: np.ndarray, weights) -> np.ndarray:
-    return base + np.tensordot(np.broadcast_to(np.asarray(weights, float), len(SLIDERS)), targets, 1)
+    return base + np.tensordot(np.broadcast_to(np.asarray(weights, float), len(targets)), targets, 1)
 
 
 def morph_normals(base: np.ndarray, faces: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -43,6 +51,8 @@ def write_morph_glb(
     faces: np.ndarray,
     material: dict,
     uv: np.ndarray | None = None,
+    names: tuple[str, ...] = SLIDERS,
+    extras: dict | None = None,
 ) -> Path:
     gltf, blob = new_gltf()
     attrs = {"POSITION": add_accessor(gltf, blob, _f32(verts)), "NORMAL": add_accessor(gltf, blob, _f32(normals))}
@@ -57,9 +67,10 @@ def write_morph_glb(
             for t, tn in zip(targets, target_normals)
         ],
     }
+    weights = [0.5 if k in SLIDERS else 0.0 for k in names]
     gltf.update(
         materials=[material],
-        meshes=[{"name": name, "primitives": [prim], "weights": [0.5] * len(SLIDERS), "extras": {"targetNames": list(SLIDERS)}}],
+        meshes=[{"name": name, "primitives": [prim], "weights": weights, "extras": {"targetNames": list(names), **(extras or {})}}],
         nodes=[{"name": name, "mesh": 0}],
         scenes=[{"nodes": [0]}],
         scene=0,

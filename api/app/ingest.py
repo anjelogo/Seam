@@ -8,6 +8,8 @@ from app.sources import client, ebay, grailed, poshmark
 
 ADAPTERS = {Source.ebay: ebay.search, Source.poshmark: poshmark.search, Source.grailed: grailed.search}
 SEED_SLOTS = [Slot.top, Slot.bottom, Slot.outer, Slot.shoes]
+# downloads dominate ingest time; 4 photos is enough to pick a best view
+MAX_PHOTOS = 4
 
 
 def cache_image(listing: Listing, i: int, img: ImageRef) -> ImageRef:
@@ -39,7 +41,7 @@ def run(queries: list[str], sources: list[Source], limit: int = 12) -> int:
                         continue
                     for listing in listings:
                         try:
-                            images = [cache_image(listing, i, img) for i, img in enumerate(listing.images)]
+                            images = [cache_image(listing, i, img) for i, img in enumerate(listing.images[:MAX_PHOTOS])]
                         except Exception as e:
                             print(f"ingest images {listing.source_id}: {e!r}")
                             continue

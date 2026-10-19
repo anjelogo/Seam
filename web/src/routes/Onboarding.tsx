@@ -96,6 +96,7 @@ export default function Onboarding() {
       base: draft.base ?? DEFAULT_PROFILE.base,
       skinTone: draft.skinTone ?? DEFAULT_PROFILE.skinTone,
       topSize: draft.topSize ?? DEFAULT_PROFILE.topSize,
+      bottomSize: profile?.bottomSize ?? DEFAULT_PROFILE.bottomSize,
       body: profile?.body ?? DEFAULT_PROFILE.body,
     });
     void useLook.getState().build(text);

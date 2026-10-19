@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from seam_shared.models import AssetStatus, BodyProfile, Item, Money, Outfit, OutfitPiece, OutfitResponse, Slot, StyleQuery
 
 from app import db
+from app.cv import sizes
 
 MODEL = "claude-sonnet-5-5"
 PER_SLOT = 30
@@ -45,17 +46,18 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str) -> dict[Slot, list[Item]]:
+def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str, include_unusable: bool) -> dict[Slot, list[Item]]:
     """Per requested slot, the PER_SLOT best items: size match first, then prompt overlap, then cheapest."""
     want = _words(text)
-    sizes = {Slot.top: query.sizes.top, Slot.outer: query.sizes.top, Slot.onepiece: query.sizes.top,
-             Slot.bottom: query.sizes.bottom, Slot.shoes: query.sizes.shoes}
+    wanted = {Slot.top: query.sizes.top, Slot.outer: query.sizes.top, Slot.onepiece: query.sizes.top,
+              Slot.bottom: query.sizes.bottom, Slot.shoes: query.sizes.shoes}
     pools = {}
     for slot in query.slots:
-        size = (sizes.get(slot) or "").upper().replace(" ", "")
+        size = sizes.ladder(slot, wanted.get(slot))
         hits = [
             i for i in db.items(conn, "WHERE json_extract(tags, '$.slot') = ?", (slot.value,))
-            if (not query.sources or i.listing.source in query.sources)
+            if (include_unusable or i.tags.usable_for_3d)
+            and (not query.sources or i.listing.source in query.sources)
             and (cap is None or cost(i) <= cap)
             and (not query.require_3d_ready or (i.asset and i.asset.status == AssetStatus.ready))
         ]
@@ -64,7 +66,7 @@ def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str) -> dict[
         def rank(i: Item):
             t = i.tags
             hay = _words(" ".join([i.listing.title, t.category.value, t.era or "", t.pattern or "", t.material or "", *t.style_tags, *(c.name for c in t.colors)]))
-            return bool(size) and (t.size_normalized or "").upper() == size, len(want & hay), -cost(i)
+            return bool(size) and t.size_normalized == size, len(want & hay), -cost(i)
 
         pools[slot] = sorted(hits, key=rank, reverse=True)[:PER_SLOT]
     return pools
@@ -156,7 +158,7 @@ def _ask(prompt: str) -> Looks:
     return msg.parsed_output
 
 
-def build(query: StyleQuery) -> OutfitResponse:
+def build(query: StyleQuery, include_unusable: bool = False) -> OutfitResponse:
     start = time.perf_counter()
     conn = db.connect()
     previous = db.outfits(conn, query.previous_outfit_ids)
@@ -165,7 +167,7 @@ def build(query: StyleQuery) -> OutfitResponse:
         # "cheaper" means every new outfit costs less than the cheapest one already shown
         lower = int(min(o.total.cents for o in previous) * 0.9)
         cap = min(cap, lower) if cap is not None else lower
-    pools = _candidates(conn, query, cap, f"{query.prompt} {query.feedback or ''}")
+    pools = _candidates(conn, query, cap, f"{query.prompt} {query.feedback or ''}", include_unusable)
     if not any(pools.values()):
         conn.close()
         raise LookupError("no tagged items match these slots, sources and budget")

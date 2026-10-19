@@ -10,6 +10,7 @@ from perceptron import Client, image, json_schema_format
 from pydantic import BaseModel, Field
 from seam_shared.models import Category, Color, Condition, Fit, ImageView, ItemTags, Listing, Money, Slot
 
+from app.cv import sizes
 from app.sources import client as http
 
 MAX_IMAGES = 8
@@ -129,9 +130,10 @@ def tag(listing: Listing) -> Optional[tuple[ItemTags, list[ImageView]]]:
             continue
         tags = ItemTags(
             **out.model_dump(include={"slot", "category", "colors", "pattern", "material", "fit", "style_tags", "era",
-                                      "size_normalized", "confidence", "best_view_index", "usable_for_3d", "unusable_reason"}),
+                                      "confidence", "best_view_index", "usable_for_3d", "unusable_reason"}),
             est_retail=Money(cents=out.est_retail_usd * 100) if out.est_retail_usd and out.est_retail_usd > 0 else None,
             tagger=tagger,
+            size_normalized=sizes.ladder(out.slot, out.size_normalized, listing.size_raw),
             garment_box=unit_box(out.garment_box, order),
         )
         return tags, out.views

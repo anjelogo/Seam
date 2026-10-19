@@ -1,4 +1,5 @@
 import io
+import threading
 from typing import Optional
 
 from perceptron import Client, image
@@ -13,12 +14,21 @@ MAX_POINTS = 12
 # props behind or around the garment can be segmented away; anything else (bag, strap, belt, jewelry, layered clothing) covers fabric
 REMOVABLE = ("hanger", "mannequin", "body", "skin", "hair", "neck", "head", "stand", "background", "object")
 _sessions = {}
+_lock = threading.Lock()
+_infer_lock = threading.Lock()
 
 
 def _session(name: str):
-    if name not in _sessions:
-        _sessions[name] = new_session(name)
-    return _sessions[name]
+    with _lock:
+        if name not in _sessions:
+            _sessions[name] = new_session(name)
+        return _sessions[name]
+
+
+def _remove(*args, **kwargs):
+    # one inference at a time: parallel SAM runs exceed 16 GB and get the process killed
+    with _infer_lock:
+        return remove(*args, **kwargs)
 
 
 def _jpeg(img: Image.Image) -> bytes:
@@ -69,13 +79,13 @@ def cutout(item_id: str, path: str, box: tuple[float, float, float, float], view
     img = img.crop((int(max(box[0] - mx, 0) * w), int(max(box[1] - my, 0) * h), int(min(box[2] + mx, 1) * w), int(min(box[3] + my, 1) * h)))
     img.thumbnail((SIZE, SIZE))
 
-    edges = remove(img, session=_session("birefnet-general-lite")).getchannel("A")
+    edges = _remove(img, session=_session("birefnet-general-lite")).getchannel("A")
     problem = None
     extras = _extras(img, garment)
     if extras:
         keep = _garment_points(edges, extras)
         prompt = [{"type": "point", "data": [x, y], "label": 1} for x, y in keep] + [{"type": "point", "data": [x, y], "label": 0} for x, y, _ in extras]
-        region = _fill_holes(remove(img, session=_session("sam"), sam_prompt=prompt).getchannel("A"))
+        region = _fill_holes(_remove(img, session=_session("sam"), sam_prompt=prompt).getchannel("A"))
         cleaned = ImageChops.multiply(edges, region.filter(ImageFilter.MaxFilter(7)))
         def fg(m: Image.Image) -> int:
             return sum(1 for v in m.getdata() if v > 127)
