@@ -35,7 +35,7 @@ def infra_line() -> str:
 
 
 async def work(queues: list[str], once: bool):
-    cv = int(os.getenv("CV_CONCURRENCY") or 4)
+    cv = int(os.getenv("CV_CONCURRENCY") or 1)
     concurrency = max(1, (3 * len(ADAPTERS) if "scrape" in queues else 0) + (cv if "cv" in queues else 0))
     log.info(infra_line())
     log.info("worker on %s, concurrency %d", ",".join(queues), concurrency)
