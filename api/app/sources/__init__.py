@@ -11,10 +11,11 @@ SLOT_WORD = {
     Slot.accessory: "accessories",
 }
 
-from app.sources import ebay, grailed, poshmark  # noqa: E402
+from app.sources import depop, ebay, grailed, poshmark  # noqa: E402
 
 ADAPTERS: dict[Source, Callable] = {
     Source.ebay: ebay.search,
+    Source.depop: depop.search,
     Source.poshmark: poshmark.search,
     Source.grailed: grailed.search,
 }
