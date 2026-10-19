@@ -8,14 +8,18 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from seam_shared.models import ApiError
 from starlette.exceptions import HTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.routes import health, items, outfits
+from app.auth.origin import check_origin
+from app.routes import auth, health, items, me, outfits
 from app.settings import DATA_DIR
 
 
 async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
-    body = ApiError(error=HTTPStatus(exc.status_code).phrase, detail=str(exc.detail))
-    return JSONResponse(body.model_dump(), status_code=exc.status_code, headers=exc.headers)
+    body = ApiError(error=HTTPStatus(exc.status_code).phrase, detail=str(exc.detail)).model_dump()
+    if field := getattr(exc, "field", None):
+        body["field"] = field
+    return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
 
 async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -29,13 +33,14 @@ def create_app() -> FastAPI:
         title="seam api",
         exception_handlers={HTTPException: http_error, RequestValidationError: validation_error},
     )
+    app.add_middleware(BaseHTTPMiddleware, dispatch=check_origin)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o for o in ("http://localhost:5173", os.getenv("VERCEL_ORIGIN")) if o],
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for module in (health, outfits, items):
+    for module in (health, outfits, items, auth, me):
         app.include_router(module.router)
     for sub in ("raw", "clean", "glb", "thumb"):
         app.mount(f"/static/{sub}", StaticFiles(directory=DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
