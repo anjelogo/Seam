@@ -4,12 +4,13 @@ import re
 import secrets
 import time
 from typing import Optional
+from uuid import UUID
 
 import anthropic
 from pydantic import BaseModel
-from seam_shared.models import AssetStatus, BodyProfile, Item, Money, Outfit, OutfitPiece, OutfitResponse, Slot, StyleQuery
+from seam_shared import db
+from seam_shared.models import BodyProfile, Item, Money, Outfit, OutfitPiece, OutfitResponse, Slot, StyleQuery
 
-from app import db
 from app.cv import sizes
 
 MODEL = "claude-sonnet-5-5"
@@ -54,13 +55,8 @@ def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str, include_
     pools = {}
     for slot in query.slots:
         size = sizes.ladder(slot, wanted.get(slot))
-        hits = [
-            i for i in db.items(conn, "WHERE json_extract(tags, '$.slot') = ?", (slot.value,))
-            if (include_unusable or i.tags.usable_for_3d)
-            and (not query.sources or i.listing.source in query.sources)
-            and (cap is None or cost(i) <= cap)
-            and (not query.require_3d_ready or (i.asset and i.asset.status == AssetStatus.ready))
-        ]
+        found, _ = db.get_items(conn, slot=slot, sources=query.sources or None, max_cents=cap, require_3d_ready=query.require_3d_ready, limit=None)
+        hits = [i for i in found if include_unusable or i.tags.usable_for_3d]
 
         # shortcut: size match ranks first instead of filtering so a thin slot still fills; filter hard once inventory is a few hundred per slot
         def rank(i: Item):
@@ -158,30 +154,31 @@ def _ask(prompt: str) -> Looks:
     return msg.parsed_output
 
 
-def build(query: StyleQuery, include_unusable: bool = False) -> OutfitResponse:
+def build(query: StyleQuery, user_id: UUID | None = None, include_unusable: bool = False) -> OutfitResponse:
     start = time.perf_counter()
-    conn = db.connect()
-    previous = db.outfits(conn, query.previous_outfit_ids)
-    cap = query.budget.cents if query.budget else None
-    if previous and query.feedback and "cheap" in query.feedback.lower():
-        # "cheaper" means every new outfit costs less than the cheapest one already shown
-        lower = int(min(o.total.cents for o in previous) * 0.9)
-        cap = min(cap, lower) if cap is not None else lower
-    pools = _candidates(conn, query, cap, f"{query.prompt} {query.feedback or ''}", include_unusable)
+    # no pooled connection is held across the ~10 s LLM call
+    with db.pool().connection() as conn:
+        previous = db.get_outfits(conn, query.previous_outfit_ids, user_id)
+        cap = query.budget.cents if query.budget else None
+        if previous and query.feedback and "cheap" in query.feedback.lower():
+            # "cheaper" means every new outfit costs less than the cheapest one already shown
+            lower = int(min(o.total.cents for o in previous) * 0.9)
+            cap = min(cap, lower) if cap is not None else lower
+        pools = _candidates(conn, query, cap, f"{query.prompt} {query.feedback or ''}", include_unusable)
+        old_ids = [p.item_id for o in previous for p in o.pieces.values()]
+        old, _ = db.get_items(conn, ids=old_ids, status=None, limit=None)
     if not any(pools.values()):
-        conn.close()
         raise LookupError("no tagged items match these slots, sources and budget")
     by_id = {i.id: i for items in pools.values() for i in items}
     # short ids keep the LLM's output small; real ids are ~20 tokens each
     short = {item_id: f"c{n}" for n, item_id in enumerate(by_id)}
     real = {v: k for k, v in short.items()}
-    by_id.update({i.id: i for o in previous for p in o.pieces.values() for i in db.items(conn, "WHERE items.id = ?", (p.item_id,))})
+    by_id.update({i.id: i for i in old})
     looks = _ask(_prompt(query, pools, cap, previous, by_id, short))
     for p in (p for look in looks.outfits for p in look.pieces):
         p.item_id, p.alternates = real.get(p.item_id, p.item_id), [real.get(a, a) for a in p.alternates]
     outfits = [_repair(look, pools, cap, by_id) for look in looks.outfits[: query.num_outfits]]
-    db.save_outfits(conn, outfits)
-    conn.commit()
-    conn.close()
+    with db.pool().connection() as conn:
+        db.save_outfits(conn, outfits, user_id)
     used = {i for o in outfits for p in o.pieces.values() for i in (p.item_id, *p.alternates)}
     return OutfitResponse(query=query, outfits=outfits, items={i: by_id[i] for i in used}, took_ms=int((time.perf_counter() - start) * 1000))

@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
     )
     for module in (health, jobs):
         app.include_router(module.router)
-    # only public folders: DATA_DIR also holds seam.db
+    # only public folders, never all of DATA_DIR
     for sub in ("clean", "glb", "thumb"):
         app.mount(f"/static/{sub}", StaticFiles(directory=settings.DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
     return app

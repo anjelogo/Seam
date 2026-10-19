@@ -1,9 +1,8 @@
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from seam_shared import db
 from seam_shared.models import Category, Item, ItemsResponse, Slot
-
-from app import db
 
 router = APIRouter()
 
@@ -18,29 +17,21 @@ def list_items(
     offset: Annotated[int, Query(ge=0)] = 0,
     include_unusable: bool = False,
 ) -> ItemsResponse:
-    filters = {
-        "json_extract(tags, '$.slot') = ?": slot and slot.value,
-        "json_extract(tags, '$.category') = ?": category and category.value,
-        "json_extract(listing, '$.title') LIKE ?": q and f"%{q}%",
-        "json_extract(listing, '$.price.cents') <= ?": max_cents,
-    }
-    clauses = [k for k, v in filters.items() if v is not None]
-    params = tuple(v for v in filters.values() if v is not None)
-    if not include_unusable:
-        clauses.append("json_extract(tags, '$.usable_for_3d') = 1")
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    conn = db.connect()
-    total = conn.execute(f"SELECT count(*) FROM items {where}", params).fetchone()[0]
-    hits = db.items(conn, f"{where} ORDER BY items.id LIMIT ? OFFSET ?", (*params, limit, offset))
-    conn.close()
-    return ItemsResponse(items=hits, total=total)
+    filters = dict(slot=slot, category=category, q=q, max_cents=max_cents)
+    with db.pool().connection() as conn:
+        if include_unusable:
+            hits, total = db.get_items(conn, **filters, limit=limit, offset=offset)
+            return ItemsResponse(items=hits, total=total)
+        # shortcut: usable filter runs in Python over every match; push into db.get_items once it takes usable_3d
+        hits, _ = db.get_items(conn, **filters, limit=None)
+    usable = [i for i in hits if i.tags and i.tags.usable_for_3d]
+    return ItemsResponse(items=usable[offset : offset + limit], total=len(usable))
 
 
 @router.get("/items/{item_id}", response_model=Item)
 def get_item(item_id: str) -> Item:
-    conn = db.connect()
-    hits = db.items(conn, "WHERE items.id = ?", (item_id,))
-    conn.close()
-    if not hits:
+    with db.pool().connection() as conn:
+        item = db.get_item(conn, item_id)
+    if item is None:
         raise HTTPException(404, f"no item {item_id}")
-    return hits[0]
+    return item
