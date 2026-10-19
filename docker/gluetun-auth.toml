@@ -1,0 +1,5 @@
+# the scrape worker rotates the VPN exit through these routes; gluetun has no published ports, so only the compose network reaches them
+[[roles]]
+name = "seam-worker"
+routes = ["GET /v1/vpn/status", "PUT /v1/vpn/status", "GET /v1/publicip/ip"]
+auth = "none"

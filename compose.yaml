@@ -134,6 +134,23 @@ services:
     depends_on: [web]
     logging: *logs
 
+  # opt-in VPN exit for scraping (--profile vpn): provider settings in gluetun.env, the CT needs /dev/net/tun
+  gluetun:
+    profiles: [vpn]
+    image: qmcgaw/gluetun:v3
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    env_file:
+      - path: gluetun.env
+        required: false
+    environment:
+      HTTPPROXY: "on"
+      HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH: /gluetun/auth/config.toml
+    volumes:
+      - ./docker/gluetun-auth.toml:/gluetun/auth/config.toml:ro
+    logging: *logs
+
 volumes:
   pgdata:
   u2net:

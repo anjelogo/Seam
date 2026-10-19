@@ -1,6 +1,7 @@
 .git
 .venv
 .env
+gluetun.env
 .agents
 .opencode
 .ruff_cache

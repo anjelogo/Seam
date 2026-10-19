@@ -4,6 +4,7 @@ dist/
 __pycache__/
 .ruff_cache/
 .env
+gluetun.env
 data/**
 !data/**/
 !data/**/.gitkeep

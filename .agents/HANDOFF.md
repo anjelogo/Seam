@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-19 12:20 · anjelo · repo gluetun + scraping speed
+- new opt-in compose profile `vpn`: Seam's own gluetun (qmcgaw/gluetun:v3, HTTP proxy :8888, control :8000, compose network only); provider settings go in a gitignored gluetun.env next to .env; the CT needs /dev/net/tun (`pct set <ctid> -dev0 /dev/net/tun`)
+- to use it: `docker compose --profile prod --profile vpn up -d` with SCRAPE_PROXY=http://gluetun:8888 and GLUETUN_CONTROL_URL=http://gluetun:8000 in .env; GLUETUN_ROTATE=true is safe there (nothing else rides that VPN)
+- scrape_all queues sources interleaved so all sources scrape at once, and photo downloads skip the SCRAPE_MIN_INTERVAL_MS spacing (own 3-in-flight cap per source): one query cycle went 293 s -> 131 s
+- action needed: none
 ## 2026-10-18 23:25 · anjelo · repo tunnel
 - new optional env var TUNNEL_TOKEN: set = cloudflared runs your Cloudflare dashboard tunnel (point its public hostname at http://web:80), empty = quick tunnel on a random trycloudflare.com URL as before
 - with a hostname, add its https origin to PUBLIC_ORIGINS (comma list) or logins through it get 403; apply with `docker compose --profile prod up -d tunnel api`
