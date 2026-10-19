@@ -13,3 +13,34 @@
 .base {
   margin-bottom: var(--gap-12);
 }
+
+.head {
+  display: flex;
+  align-items: center;
+  margin-top: var(--gap-12);
+}
+
+/* keeps the 44px hit area from padding out the row */
+.tip {
+  position: relative;
+  margin: -13px -13px -13px -6px;
+}
+
+.label {
+  margin-top: var(--gap-12);
+}
+
+/* PillGroup's track as equal columns so every size fits the pane */
+.sizes > div {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.sizes label > span {
+  padding: 0;
+}
+
+.waists > div {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-radius: var(--radius-panel);
+}

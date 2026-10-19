@@ -26,6 +26,7 @@ from seam_shared.models import (
 from app import settings, store
 from app.fit.fit import fit_mesh
 from app.pipeline import get_backend
+from app.pipeline.bake import copy_texture
 from app.voxel import voxelize
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,13 @@ async def _generate(asset: Asset3D, job: GenJob) -> None:
             backend.texture_mesh(TEMPLATES_DIR / f"{asset.template_id}_masc.glb", image, glb),
             backend.texture_mesh(TEMPLATES_DIR / f"{asset.template_id}_fem.glb", image, GLB_DIR / f"{safe_id}_fem.glb"),
         )
+        # outer layers also get <safe>_open[_fem].glb: the open-front template wearing the same texture
+        for suffix, base in (("", BodyBase.masc), ("_fem", BodyBase.fem)):
+            opened = TEMPLATES_DIR / f"{asset.template_id}_open_{base.value}.glb"
+            if opened.is_file():
+                await asyncio.to_thread(
+                    copy_texture, GLB_DIR / f"{safe_id}{suffix}.glb", opened, GLB_DIR / f"{safe_id}_open{suffix}.glb"
+                )
         # the fem file is glb_url with _fem.glb, see web modelUrlFor
         asset.glb_url = _url(glb)
     else:

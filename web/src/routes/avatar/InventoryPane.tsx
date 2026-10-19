@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useMemo } from "react";
 import { TeeLoader } from "../../components/brand";
 import { ItemCard, UnderlineField } from "../../components/ui";
 import { useInventory, useLook, useUiItems } from "../../state";
@@ -13,7 +14,8 @@ export default function InventoryPane() {
   const loading = useInventory((s) => s.loading);
   const error = useInventory((s) => s.error);
   const worn = useLook((s) => s.worn);
-  const items = useUiItems(results);
+  const usable = useMemo(() => results.filter((item) => item.tags?.usable_for_3d !== false), [results]);
+  const items = useUiItems(usable);
 
   return (
     <div className={styles.pane}>

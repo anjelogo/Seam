@@ -53,6 +53,17 @@
   gap: var(--gap-12);
 }
 
+.size {
+  display: flex;
+  align-items: center;
+}
+
+/* keeps the 44px hit area from padding out the row */
+.tip {
+  position: relative;
+  margin: -13px -13px -13px -6px;
+}
+
 .price {
   margin-left: auto;
   font-size: 17px;

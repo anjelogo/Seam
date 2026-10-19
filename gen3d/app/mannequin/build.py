@@ -4,13 +4,14 @@ from seam_shared.models import TEMPLATE_FOR_CATEGORY, BodyBase
 
 from app.mannequin.anchors import write_anchors
 from app.mannequin.export import export_avatar
-from app.mannequin.templates import export_template
+from app.mannequin.templates import TEMPLATES, export_template
 from app.settings import ASSETS_DIR
 
 
 def build(assets: Path = ASSETS_DIR) -> list[Path]:
     (assets / "templates").mkdir(parents=True, exist_ok=True)
-    templates = sorted({t for t in TEMPLATE_FOR_CATEGORY.values() if t})
+    mapped = {t for t in TEMPLATE_FOR_CATEGORY.values() if t}
+    templates = sorted(mapped | {f"{t}_open" for t in mapped if f"{t}_open" in TEMPLATES})
     out = []
     for base in (b.value for b in BodyBase):
         out.append(export_avatar(base, assets / f"avatar_{base}.glb"))

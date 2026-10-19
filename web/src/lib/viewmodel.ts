@@ -34,6 +34,7 @@ export type Profile = {
   base: BodyBase;
   skinTone: string;
   topSize: TopSize;
+  bottomSize: string;
   body: { shoulders: number; chest: number; waist: number; hips: number; legs: number };
 };
 
