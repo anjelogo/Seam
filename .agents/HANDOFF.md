@@ -9,6 +9,33 @@ Format:
 
 ---
 
+## 2026-10-18 22:45 · anjelo · repo run steps
+- Postgres replaces SQLite (data/seam.db is gone, nothing migrated): `make db` starts postgres on 127.0.0.1:5432 and applies shared/migrations, `make psql` opens a shell, then `make dev` on the host as before
+- one root compose.yaml: `docker compose --profile dev up --build` (one-container dev stack + postgres) or `docker compose --profile prod up --build -d` (api, gen3d, worker, worker-cv, caddy on :8080, tunnel); in a Proxmox LXC run `bash docker/ct-setup.sh`
+- Python 3.12 everywhere (.python-version, Dockerfiles); run `uv sync --all-packages` once to rebuild .venv
+- action needed (both): add POSTGRES_PASSWORD=seam to your .env (compose refuses to parse without it) plus the vars below
+## 2026-10-18 22:45 · anjelo · env vars
+- new: DATABASE_URL (host default postgresql://seam:seam@localhost:5432/seam, compose points it at postgres), POSTGRES_PASSWORD, PUBLIC_ORIGINS (comma list for the Origin check), COOKIE_SECURE (true in prod), SESSION_TTL_DAYS=30
+- scraping, all optional (empty = direct, no challenge solving, no rotation): SCRAPE_PROXY (gluetun http proxy), FLARESOLVERR_URL, GLUETUN_CONTROL_URL, GLUETUN_CONTROL_AUTH, GLUETUN_ROTATE=false
+- tuning: SCRAPE_CONCURRENCY_PER_SOURCE=3, SCRAPE_MIN_INTERVAL_MS=500, SCRAPE_QUERIES, SCRAPE_PAGES=1, SCRAPE_CRON="0 9 * * *" (UTC), STALE_HOURS=72, CV_CONCURRENCY=4
+- action needed: copy them from .env.example
+## 2026-10-18 22:45 · anjelo · api auth
+- cookie sessions (`seam_session`): POST /auth/signup {name,email,password} 201|409|422, POST /auth/login 200|401|429, POST /auth/logout 204, GET /auth/me 200|401, GET /auth/check 204 + X-User-Id (Caddy forward_auth on /gen3d/*)
+- GET/PUT /me/profile {body} (the whole web profile), GET/POST /me/looks, DELETE /me/looks/{id}; POST /outfits requires login and reads refine history per user
+- auth errors add an optional `field` to the ApiError body (local to the auth routes, schema unchanged); writes with a foreign Origin get 403; login and signup allow 10 tries per 15 min per IP and per email
+- action needed (caden): routes that need a user take `Depends(current_user)` from app.auth.deps
+## 2026-10-18 22:45 · anjelo · api worker
+- POST /ingest/run and app/ingest.py are gone; from api/: `uv run python -m app.worker --queues scrape,default,cv [--once]`, `... enqueue-all` (one scrape_all by hand), `... status` (last 20 scrape_runs)
+- scrape_all runs on SCRAPE_CRON over sources x SCRAPE_QUERIES x top/bottom/outer/shoes x pages; each job keeps 4 photos per listing in data/raw and defers tag(item_id) on the cv queue; expire_stale runs hourly
+- adapters are async via app/sources/fetch.py (curl_cffi, per-source limits, retries, FlareSolverr on Cloudflare challenges); Perceptron and eBay use the direct api_client / api_aclient
+- run one scrape worker process only (rate limits live in memory); worker-cv can scale
+- action needed (caden): tagging needs PERCEPTRON_API_KEY; with only FAL_KEY set the perceptron SDK picks provider fal and every tag job fails
+## 2026-10-18 22:45 · anjelo · what moved
+- all DB access is shared/seam_shared/db.py (`from seam_shared import db`); schema in shared/migrations/001_init.sql, applied by `python -m seam_shared.migrate`; api/app/db.py is gone and DATA_DIR lives in api/app/settings.py
+- docker/prod/* moved up to docker/ (backend.Dockerfile, web.Dockerfile, Caddyfile, ct-setup.sh); docker/Dockerfile is docker/dev.Dockerfile; docker/compose.yaml and docker/prod/compose.yaml became the root compose.yaml
+- `cd api && uv run python -m app.cv [limit]` still tags untagged items by hand
+- action needed: none
+
 ## 2026-10-18 · caden · api qa fixes
 - issue 2: GET /items and the /outfits pool now return only tags.usable_for_3d = true items; `?include_unusable=true` on either shows everything (debug)
 - issue 6: tags.size_normalized is on one ladder per slot: top/outer/onepiece XS S M L XL XXL, bottom W26..W40 (integer waist), shoes US<n> (e.g. US9.5), accessory null
@@ -26,17 +53,13 @@ Format:
 - stage: wheel/pinch/+- zoom and hotspot focus with return; inventory hides tags.usable_for_3d=false client-side
 - action needed (caden): none, but the /items usable filter is still wanted
 
-## 2026-10-18 00:10 · anjelo · repo
-- new run step: `docker compose -f docker/compose.yaml up --build` runs api 8000, gen3d 8001, web 5273 in one container (stop make dev first, same ports); wait for "[seam] ready" in the logs (~2 min first start)
-- it copies the checkout at start (restart to pick up edits), reads the root .env (ANTHROPIC_API_KEY for /outfits), mounts ./data read-write as DATA_DIR so the scraped seam.db and images are used
-- action needed: none
 ## 2026-10-17 23:05 · anjelo · gen3d
 - new run step: `cd gen3d && uv run python -m app.bake [item_id ...] [--fixtures] [--image ITEM_ID=path] [--backend fal|mock]` bakes in order, max 10 a run, to DATA_DIR/glb/<source>_<source_id>.glb (+ _fem.glb), upserts assets; --image saves the photo as data/clean/<source>_<source_id>.png
-- prebake + app.bake look up items in DATA_DIR/seam.db `items` first (tags.clean_image, else listing.images[0]; tags.category), then shared/schema/fixtures/outfit_response.json; untagged or usable_for_3d=false items are skipped
+- prebake + app.bake look up items in the `items` table first (tags.clean_image, else listing.images[0]; tags.category), then shared/schema/fixtures/outfit_response.json; untagged or usable_for_3d=false items are skipped
 - a running gen3d server picks up assets app.bake marked ready (POST /gen3d/jobs checks the store on a miss or failed job), no restart needed
 - action needed: none
 ## 2026-10-17 · caden · api outfits
-- GET /items, /items/{id}, POST /outfits read sqlite (fixture gone); Item.asset joined from gen3d's assets table; /static mounts only raw, clean, glb, thumb
+- GET /items, /items/{id}, POST /outfits read the db (fixture gone); Item.asset joined from gen3d's assets table; /static mounts only raw, clean, glb, thumb
 - /outfits: Claude Sonnet 5.5 on a prefiltered pool; totals incl. shipping; ids o_<random>; refine reads previous_outfit_ids from table outfits; 404 no candidates, 502 llm error
 - new env var ANTHROPIC_API_KEY (required for /outfits)
 - gen3d pillow pin relaxed >=13.0.0 -> >=11 (perceptron caps pillow<12; resolves 11.3.0); master's uv.lock was corrupt from a hand merge, regenerated
@@ -53,14 +76,8 @@ Format:
 - avatar = procedural mannequin: assets/avatar_{masc,fem}.glb (Y-up, faces +Z, feet at origin), morph targets = BODY_SLIDERS, influence = slider value; anchors in assets/anchors.json
 - templates: assets/templates/<id>_<base>.glb, same morph targets; template_textured asset glb_url = masc, fem is the same path with `_fem.glb`
 - backends mock/fal/local via GEN3D_BACKEND (default mock); env FAL_KEY, GEN3D_BACKEND, ASSETS_DIR; gen3d/app/settings.py loads root .env; fal = fal-ai/trellis-2 (~55 s/job), texturing via fal-ai/trellis-2/retexture baked onto template UVs (not run live yet, mock fallback)
-- assets table in DATA_DIR/seam.db (item_id, json = Asset3D, updated_at), upserted on every status change
-- action needed (caden): join assets onto Item.asset; api /static serves all of DATA_DIR incl. seam.db, mount only subfolders like gen3d does
-
-## 2026-10-17 · caden · api ingest
-- POST /ingest/run {"queries":[str],"sources":[Source]} -> {"added":int}; dev-only seeding, adapters: poshmark, grailed, ebay (needs EBAY_APP_ID/EBAY_CERT_ID)
-- sqlite store at $DATA_DIR/seam.db, table items(id, source, listing json, tags json); images cached to data/raw/<source>/, ImageRef.url = /static/raw/...
-- depop + mercari return 403 (cloudflare), dropped
-- action needed: none; /items + /outfits still serve the fixture until tagging lands
+- assets table (item_id, json = Asset3D, updated_at), upserted on every status change
+- action needed: none
 
 ## 2026-10-17 · anjelo · repo
 - scaffolded monorepo; /api and /gen3d serve fixture mocks; /web is an empty shell with typed api client
