@@ -3,7 +3,7 @@ import type { Asset3D, BodyBase, GenJob, Item, Outfit, OutfitResponse, Slot, Sty
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { pollGenJob, postGenJob, postOutfits } from "../lib/api";
+import { getItem, getLooks, pollGenJob, postGenJob, postLook, postOutfits } from "../lib/api";
 import { slotLabel, toUiItem } from "../lib/viewmodel";
 import type { Look, UiItem } from "../lib/viewmodel";
 import { useProfile } from "./profile";
@@ -21,7 +21,7 @@ type LookState = {
   build(prompt: string): Promise<void>;
   toggle(id: string): void;
   takeOff(id: string): void;
-  wearLook(look: Look): void;
+  wearLook(look: Look): Promise<void>;
   addItems(items: Item[]): void;
   ensureAssets(): void;
   clearError(): void;
@@ -81,12 +81,24 @@ function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Dres
   return { items, outfits: res.outfits, worn, assets, saved };
 }
 
+const saveLook = (look: Look) => void postLook(look).catch(() => {});
+
 export function applyOutfit(prompt: string, res: OutfitResponse): string[] | null {
   const next = wearOutfit(useLook.getState(), prompt, res);
   if (!next) return null;
   useLook.setState({ ...next, prompt });
+  saveLook(next.saved[0]);
   return next.worn;
 }
+
+export async function fetchSaved() {
+  try {
+    const looks = await getLooks();
+    useLook.setState({ saved: looks.map(({ prompt, itemIds }) => ({ prompt, itemIds })) });
+  } catch {}
+}
+
+export const clearSaved = () => useLook.setState({ saved: [] });
 
 export const conversionPending = (id: string) => converting.has(id);
 
@@ -133,6 +145,7 @@ export const useLook = create<LookState>()(
             return;
           }
           set({ ...next, building: false });
+          saveLook(next.saved[0]);
         } catch {
           if (seq === buildSeq) set({ building: false, lastError: "couldn't build that look. try again." });
           return;
@@ -148,7 +161,11 @@ export const useLook = create<LookState>()(
         get().ensureAssets();
       },
       takeOff: (id) => set((s) => ({ worn: s.worn.filter((w) => w !== id) })),
-      wearLook: (look) => {
+      wearLook: async (look) => {
+        // looks synced from another device may reference items not cached here
+        const missing = look.itemIds.filter((id) => !get().items[id]);
+        const fetched = await Promise.all(missing.map((id) => getItem(id).catch(() => null)));
+        get().addItems(fetched.filter((item): item is Item => !!item));
         set((s) => ({ prompt: look.prompt, worn: look.itemIds.filter((id) => slotOf(s.items[id]) !== null) }));
         get().ensureAssets();
       },

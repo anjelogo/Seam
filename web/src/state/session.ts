@@ -1,32 +1,54 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { handleUnauthorized } from "../lib/api";
 import * as auth from "../lib/auth";
 import type { User } from "../lib/auth";
-import { safeStorage } from "./storage";
+import { clearSaved, fetchSaved } from "./look";
+import { clearProfile, fetchProfile } from "./profile";
+
+type Status = "unknown" | "authed" | "anon";
 
 type SessionState = {
   user: User | null;
+  status: Status;
+  hydrate(): Promise<void>;
   login(email: string, password: string): Promise<User>;
   signup(name: string, email: string, password: string): Promise<User>;
-  logout(): void;
+  logout(): Promise<void>;
 };
 
-export const useSession = create<SessionState>()(
-  persist(
-    (set) => ({
-      user: null,
-      login: async (email, password) => {
-        const user = await auth.login(email, password);
-        set({ user });
-        return user;
-      },
-      signup: async (name, email, password) => {
-        const user = await auth.signup(name, email, password);
-        set({ user });
-        return user;
-      },
-      logout: () => set({ user: null }),
-    }),
-    { name: "seam.session", storage: safeStorage, partialize: ({ user }) => ({ user }) },
-  ),
-);
+let hydrating: Promise<void> | null = null;
+
+export const useSession = create<SessionState>()((set) => {
+  const signedIn = (user: User) => {
+    set({ user, status: "authed" });
+    void fetchSaved();
+    return user;
+  };
+  return {
+    user: null,
+    status: "unknown",
+    hydrate: () =>
+      (hydrating ??= auth
+        .me()
+        .then((user) => {
+          if (!user) return set({ user: null, status: "anon" });
+          signedIn(user);
+          void fetchProfile();
+        })
+        .catch(() => set({ user: null, status: "anon" }))),
+    login: async (email, password) => signedIn(await auth.login(email, password)),
+    signup: async (name, email, password) => {
+      const user = await auth.signup(name, email, password);
+      clearProfile();
+      return signedIn(user);
+    },
+    logout: async () => {
+      await auth.logout().catch(() => {});
+      clearProfile();
+      clearSaved();
+      set({ user: null, status: "anon" });
+    },
+  };
+});
+
+handleUnauthorized(() => useSession.setState({ user: null, status: "anon" }));

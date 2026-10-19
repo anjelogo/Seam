@@ -1,4 +1,7 @@
-export type User = { name?: string; email: string };
+import * as api from "./api";
+import type { RequestError } from "./api";
+
+export type User = { id: string; email: string; name: string };
 
 type AuthField = "name" | "email" | "password";
 
@@ -18,15 +21,36 @@ function required(value: string, field: AuthField) {
   return trimmed;
 }
 
-// TODO(anjelo): swap in real auth endpoint
+const FIELDS: AuthField[] = ["name", "email", "password"];
+
+function toAuthError(err: unknown, fallback: AuthField): AuthError {
+  const { status, detail, field } = (err ?? {}) as Partial<RequestError>;
+  const known = FIELDS.find((f) => f === field);
+  if (known && detail && status && [401, 409, 422, 429].includes(status)) return new AuthError(detail, known);
+  return new AuthError("something went wrong. try again.", fallback);
+}
+
 export async function login(email: string, password: string): Promise<User> {
-  const user: User = { email: required(email, "email") };
+  const address = required(email, "email");
   required(password, "password");
-  return user;
+  return api.postLogin(address, password).catch((err) => {
+    throw toAuthError(err, "email");
+  });
 }
 
 export async function signup(name: string, email: string, password: string): Promise<User> {
-  const user: User = { name: required(name, "name"), email: required(email, "email") };
+  const fullName = required(name, "name");
+  const address = required(email, "email");
   required(password, "password");
-  return user;
+  return api.postSignup(fullName, address, password).catch((err) => {
+    throw toAuthError(err, "email");
+  });
 }
+
+export const me = (): Promise<User | null> =>
+  api.getMe().catch((err: Partial<RequestError>) => {
+    if (err?.status === 401) return null;
+    throw err;
+  });
+
+export const logout = () => api.postLogout();
