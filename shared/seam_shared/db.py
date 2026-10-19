@@ -92,11 +92,12 @@ def get_item(conn: Connection, item_id: str) -> Item | None:
 
 
 def _items_sql(*, ids=None, slot=None, category=None, q=None, max_cents=None, sources=None, require_3d_ready=False,
-               status="active", order="id", limit=50, offset=0) -> tuple[str, list, str, list]:
+               usable_3d=None, status="active", order="id", limit=50, offset=0) -> tuple[str, list, str, list]:
     filters = [
         ("items.id = ANY(%s)", None if ids is None else list(ids)),
         ("items.slot = %s", slot),
         ("items.category = %s", category),
+        ("items.usable_3d = %s", usable_3d),
         ("items.title ILIKE %s", f"%{q}%" if q else None),
         ("items.price_cents + coalesce(items.ship_cents, 0) <= %s", max_cents),
         ("items.source = ANY(%s)", list(sources) if sources else None),
