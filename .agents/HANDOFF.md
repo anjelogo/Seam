@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-20 21:05 · anjelo · gen3d drape poc
+- sewing-pattern + cloth-sim PoC lives in gen3d/drape (own uv package; nothing wired into prod): 4 real prod items -> Claude design params -> pygarment patterns on size bodies -> our mannequin exported as a GarmentCode body; panel texturing, morph-bound GLBs (web useBodyMorphs-compatible) and a side-by-side viewer all run locally
+- the warp cloth sim itself needs a CUDA box: drape/scripts/setup_gpu.sh + run_poc.sh are ready, local CPU sim segfaults (documented); numbers, screenshots, license flag (warp fork is non-commercial) and verdict in gen3d/drape/RESULTS.md
+- action needed: none (PoC only)
+
 ## 2026-10-19 13:50 · anjelo · api depop volume
 - depop searches run twice (gender=female, gender=male; unfiltered returns the same 24 as female) and the worker keeps all 48 per (query, slot), vs 12 for the other sources
 - SCRAPE_QUERIES default adds denim, leather, 90s, carhartt (10 queries): ~2,900 raw listings a night across sources, more than the ~1,400/day one cv job can tag, so the untagged backlog grows
