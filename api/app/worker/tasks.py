@@ -20,6 +20,8 @@ log = logging.getLogger("seam.worker")
 
 SEED_SLOTS = [Slot.top, Slot.bottom, Slot.outer, Slot.shoes]
 LIMIT = 12
+# depop can't page, so keep everything its two gender variants return (2 x 24)
+LIMITS = {Source.depop: 48}
 # downloads dominate ingest time; 4 photos is enough to pick a best view
 MAX_PHOTOS = 4
 # blocked, config (missing keys) and HTTP 4xx errors won't change on a retry
@@ -47,7 +49,7 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
     fetched = added = updated = errors = 0
     last_error = None
     try:
-        listings = await ADAPTERS[src](query, Slot(slot), LIMIT, page)
+        listings = await ADAPTERS[src](query, Slot(slot), LIMITS.get(src, LIMIT), page)
         fetched = len(listings)
         for listing in listings:
             try:
@@ -90,6 +92,11 @@ def _tag_one(item_id: str) -> bool:
 @app.task(queue="cv")
 async def tag(item_id: str):
     global _cv_pool
+    with db.pool().connection() as conn:
+        active = db.get_items(conn, ids=[item_id], limit=1)[1]
+    if not active:
+        log.info("tag %s: skipped, no longer active", item_id)
+        return
     if _cv_pool is None:
         # one fresh process per job: onnxruntime holds a job's ~11 GB peak until its process exits
         _cv_pool = ProcessPoolExecutor(

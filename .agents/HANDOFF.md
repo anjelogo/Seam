@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-19 13:50 · anjelo · api depop volume
+- depop searches run twice (gender=female, gender=male; unfiltered returns the same 24 as female) and the worker keeps all 48 per (query, slot), vs 12 for the other sources
+- SCRAPE_QUERIES default adds denim, leather, 90s, carhartt (10 queries): ~2,900 raw listings a night across sources, more than the ~1,400/day one cv job can tag, so the untagged backlog grows
+- tag jobs now skip items that are no longer active (expired or sold before their turn) instead of paying Perceptron for them
+- action needed: none
 ## 2026-10-19 13:10 · anjelo · api depop + cv memory
 - new adapter Source.depop (app/sources/depop.py): parses the www.depop.com/search/ page (Next.js flight data), first 24 results per query only (page>0 returns []), q = query + SLOT_WORD; title = first line of the description (depop has no title); seller not in the search data; robots.txt disallows /search/* and Depop's ToS bans scraping, risk accepted by anjelo
 - web STORE_SOURCES gains depop (building screen chips), in BUILDING_SPEC order

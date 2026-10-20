@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from decimal import Decimal
@@ -17,19 +18,29 @@ CONDITION = {
 }
 # the search page streams its data as Next.js flight chunks: self.__next_f.push([1,"<json string>"])
 FLIGHT = re.compile(r'self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)')
+# the page can't be paged, so each gender filter is another 24-result page; unfiltered == female for anonymous US visitors
+VARIANTS = [{"gender": "female"}, {"gender": "male"}]
 
 
 async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) -> list[Listing]:
-    # shortcut: first 24 results only (the page ignores cursors, the paging API is gone); vary queries for more
+    # shortcut: first 24 results per variant (the page ignores cursors, the paging API is gone); vary queries for more
     if page:
         return []
     q = f"{query} {SLOT_WORD[slot]}" if slot else query
-    html = await fetch("https://www.depop.com/search/", source=Source.depop, params={"q": q})
-    html.raise_for_status()
-    flight = "".join(json.loads(s) for s in FLIGHT.findall(html.text))
+    pages = await asyncio.gather(*(fetch("https://www.depop.com/search/", source=Source.depop, params={"q": q, **v}) for v in VARIANTS))
+    found: dict[int, dict] = {}
+    for html in pages:
+        html.raise_for_status()
+        for o in _objects(html.text):
+            if o.get("status") == "STATUS_ONSALE":
+                found.setdefault(o["id"], o)
+    return [_listing(o) for o in list(found.values())[:limit]]
+
+
+def _objects(text: str) -> list[dict]:
+    flight = "".join(json.loads(s) for s in FLIGHT.findall(text))
     pages, _ = json.JSONDecoder().raw_decode(flight, flight.index('"pages":[{"searchId"') + len('"pages":'))
-    found = [o for p in pages for o in p["data"]["objects"] if o.get("status") == "STATUS_ONSALE"]
-    return [_listing(o) for o in found[:limit]]
+    return [o for p in pages for o in p["data"]["objects"]]
 
 
 def _listing(o: dict) -> Listing:
