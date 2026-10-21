@@ -28,6 +28,14 @@ TINT_SIGMA = 0.08
 TINT_LO, TINT_HI = 0.9, 1.1
 TORSO_MARKS = ("neck_left", "neck_right", "shoulder_left", "shoulder_right", "armpit_left",
                "armpit_right", "hem_left", "hem_right")
+PAIRED = (("neck_left", "neck_right"), ("shoulder_left", "shoulder_right"),
+          ("armpit_left", "armpit_right"), ("hem_left", "hem_right"), ("waist_left", "waist_right"),
+          ("hem_outer_left", "hem_outer_right"), ("hem_inner_left", "hem_inner_right"))
+TOL_FRAC, KEEP_FRAC, SPAN_FRAC = 0.07, 0.12, 0.45
+ROT_LIMIT, ROT_GATE, RATIO_MAX, MIN_SPREAD_CM, COVER_MIN, CHEST_FRAC = 2.5, 3.0, 2.2, 5.0, 0.5, 0.45
+CHEST_SLACK = 0.3
+TPS_MIN, TPS_RMS_CM = 6, 1.5
+SCALE_GATE, SLEEVE_SCALE = (0.35, 2.8), (0.5, 1.8)
 PATCH, OVERLAP, CANDS, POOL = 48, 16, 40, 160
 PREVIEW_PPC = 4.0
 THUMB = 384
@@ -252,14 +260,10 @@ def detect_marks(mask: np.ndarray, garment: str) -> tuple[dict, list[str], tuple
             m[f"hem_inner_{side}"] = [inner, float(rb)]
         return m, notes, (c0, c1, r0, r1)
 
-    band = torso_band(mask, r0, r1)
-    if band is None:
+    tb = torso_box(mask)
+    if tb is None:
         return m, ["no torso band"], (c0, c1, r0, r1)
-    ba, bb = band
-    full = 0.8 * (bb - ba + 1)
-    wide = [r for r in range(r0, r1 + 1)
-            if len(rr := runs_of(mask[r, ba:bb + 1])) and (rr[:, 1] - rr[:, 0]).max() > full]
-    hem_row = max(wide) if wide else r1
+    ba, bb, shoulder, hem_row = tb
     run = runs_of(mask[hem_row])
     hit = run[np.argmax(np.minimum(run[:, 1], bb) - np.maximum(run[:, 0], ba))]
     m["hem_right"], m["hem_left"] = [float(hit[0]), float(hem_row)], [float(hit[1] - 1), float(hem_row)]
@@ -301,10 +305,42 @@ def detect_marks(mask: np.ndarray, garment: str) -> tuple[dict, list[str], tuple
             continue
         prof = top[cc - ba]
         m[f"shoulder_{side}"] = [float(cc[k := chord_peak(cc, prof)]), float(prof[k])]
-    # the torso's own top: the first row the band is mostly covered, so a hood or collar never sets it
+    return m, notes, (ba, bb, shoulder, hem_row)
+
+
+def torso_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Torso columns that reach the hem, the hem row, and the torso's own top row."""
+    ys = np.nonzero(mask.any(1))[0]
+    r0, r1 = int(ys.min()), int(ys.max())
+    band = torso_band(mask, r0, r1)
+    if band is None:
+        return None
+    ba, bb = band
+    full = 0.8 * (bb - ba + 1)
+    wide = [r for r in range(r0, r1 + 1)
+            if len(rr := runs_of(mask[r, ba:bb + 1])) and (rr[:, 1] - rr[:, 0]).max() > full]
+    hem_row = max(wide) if wide else r1
+    # the first row the band is mostly covered, so a hood or collar never sets it
     cover = mask[:, ba:bb + 1].mean(1)
     shoulder = next((r for r in range(r0, hem_row + 1) if cover[r] > 0.5), r0)
-    return m, notes, (ba, bb, shoulder, hem_row)
+    return ba, bb, shoulder, hem_row
+
+
+def layout_box(data: dict, res: float = 0.25) -> tuple[float, float, float, float]:
+    """torso_box on the front-lay silhouette, in layout cm, so the photo's box and the pattern's mean the same."""
+    polys = [apply_affine(np.asarray(p["layout"]["affine"], float), np.asarray(p["outline_cm"], float))
+             for p in data["panels"].values() if p["layout"]["view"] == "front" and p["kind"] == "front"]
+    pts = np.concatenate(polys)
+    (x0, y0), (x1, y1) = pts.min(0), pts.max(0)
+    img = Image.new("L", (int(np.ceil((x1 - x0) / res)) + 1, int(np.ceil((y1 - y0) / res)) + 1), 0)
+    draw = ImageDraw.Draw(img)
+    for q in polys:
+        draw.polygon([((x - x0) / res, (y1 - y) / res) for x, y in q], fill=1)
+    tb = torso_box(np.asarray(img, bool))
+    if tb is None:
+        return float(x0), float(x1), float(y1), float(y0)
+    ba, bb, top, hem = tb
+    return float(x0 + ba * res), float(x0 + bb * res), float(y1 - top * res), float(y1 - hem * res)
 
 
 def torso_pts(data: dict) -> np.ndarray:
@@ -315,79 +351,294 @@ def torso_pts(data: dict) -> np.ndarray:
                            if p["layout"]["view"] == "front" and p["kind"] == "front"])
 
 
-def bbox_prior(data: dict, box: tuple[int, int, int, int]) -> tuple[np.ndarray, float]:
-    pts = torso_pts(data)
+def bbox_prior(lay: tuple[float, float, float, float], box: tuple[int, int, int, int]) -> np.ndarray:
+    lx0, lx1, ltop, lhem = lay
     c0, c1, r0, r1 = box
-    sx = (c1 - c0) / max(float(np.ptp(pts[:, 0])), 1e-6)
-    sy = (r1 - r0) / max(float(np.ptp(pts[:, 1])), 1e-6)
-    lin = np.array([[sx, 0.0], [0.0, -sy],
-                    [c0 - sx * pts[:, 0].min(), r1 + sy * pts[:, 1].min()]])
-    return lin, float(np.hypot(c1 - c0, r1 - r0))
+    sx = (c1 - c0) / max(lx1 - lx0, 1e-6)
+    sy = (r1 - r0) / max(ltop - lhem, 1e-6)
+    return np.array([[sx, 0.0], [0.0, -sy], [c0 - sx * lx0, r1 + sy * lhem]])
 
 
-def anchor_prior(layout: dict, found: dict, pair: tuple[str, str]) -> np.ndarray | None:
-    """Reflected similarity pinned on two landmarks: scale, rotation and shift, with no third point to skew it."""
-    if not all(k in layout and k in found for k in pair):
-        return None
+def band_prior(lay: tuple[float, float, float, float], box: tuple[int, int, int, int]) -> np.ndarray:
+    """Upright uniform seed from the torso band width and the hem row: no top row, so no sleeve enters it."""
+    lx0, lx1, _ltop, lhem = lay
+    ba, bb, _top, hem = box
+    s = (bb - ba) / max(lx1 - lx0, 1e-6)
+    return np.array([[s, 0.0], [0.0, -s], [0.5 * (ba + bb - s * (lx0 + lx1)), hem + s * lhem]])
+
+
+def apply_lin(f: np.ndarray, p: np.ndarray) -> np.ndarray:
+    return np.concatenate([p, np.ones((len(p), 1))], 1) @ f
+
+
+def sim_fit(src: np.ndarray, dst: np.ndarray) -> np.ndarray | None:
+    """Least-squares reflected similarity layout cm -> px: one scale, one rotation, the image y flip."""
     rows, rhs = [], []
-    for k in pair:
-        x, y = layout[k]
+    for (x, y), (u, v) in zip(src, dst):
         rows += [[x, y, 1, 0], [-y, x, 0, 1]]
-        rhs += [found[k][0], found[k][1]]
+        rhs += [u, v]
     try:
         a, b, tx, ty = np.linalg.lstsq(np.array(rows, float), np.array(rhs, float), rcond=None)[0]
-    except np.linalg.LinAlgError:
+    except (np.linalg.LinAlgError, ValueError):
         return None
     return np.array([[a, b], [b, -a], [tx, ty]])
 
 
-def fit_warp(layout: dict, found: dict, priors: list[np.ndarray], diag: float,
-             allow: tuple[str, ...]) -> tuple[object, str, list[str], float]:
-    """Layout cm -> cutout px over the allowed landmarks only, keeping the pairs a robust prior agrees with."""
-    keys = [k for k in layout if k in found and k in allow]
-    allsrc = np.array([layout[k] for k in keys], float).reshape(-1, 2)
-    alldst = np.array([found[k] for k in keys], float).reshape(-1, 2)
-    a = np.concatenate([allsrc, np.ones((len(allsrc), 1))], 1)
+def sim_held(src: np.ndarray, dst: np.ndarray, deg: float) -> np.ndarray | None:
+    """The same fit with the rotation held, so a tilted landmark set cannot tip the whole garment."""
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    rows, rhs = [], []
+    for (x, y), (u, v) in zip(src, dst):
+        rows += [[c * x + s * y, 1, 0], [s * x - c * y, 0, 1]]
+        rhs += [u, v]
+    try:
+        k, tx, ty = np.linalg.lstsq(np.array(rows, float), np.array(rhs, float), rcond=None)[0]
+    except (np.linalg.LinAlgError, ValueError):
+        return None
+    return np.array([[k * c, k * s], [k * s, -k * c], [tx, ty]])
 
-    def miss(f: np.ndarray) -> np.ndarray:
-        return np.linalg.norm(a @ f - alldst, axis=1)
 
-    prior = min(priors, key=lambda f: float(np.median(miss(f))))
-    fit = prior
+def sim_pose(f: np.ndarray) -> tuple[float, float]:
+    return math.degrees(math.atan2(f[0, 1], f[0, 0])), float(math.hypot(f[0, 0], f[0, 1]))
+
+
+def sim_upright(src: np.ndarray, dst: np.ndarray) -> np.ndarray | None:
+    """A flat lay is upright, so a fit that wants more than ROT_LIMIT is refitted at the limit instead."""
+    f = sim_fit(src, dst)
+    if f is None:
+        return None
+    rot = sim_pose(f)[0]
+    if abs(rot) <= ROT_LIMIT:
+        return f
+    held = sim_held(src, dst, math.copysign(ROT_LIMIT, rot))
+    return f if held is None else held
+
+
+def drop_lonely(keep: set[str]) -> set[str]:
+    """One side's landmarks alone tip and shift the print, so a partnerless pair member is no evidence."""
+    for a, b in PAIRED:
+        if (a in keep) != (b in keep):
+            keep -= {a, b}
+    return keep
+
+
+def robust_sim(keys: list[str], src: np.ndarray, dst: np.ndarray, tol: float, prior: np.ndarray,
+               span: float) -> tuple[np.ndarray, set[str]]:
+    """The upright uniform map most landmark pairs agree with: two-point seeds scored by inliers, then trimmed."""
+    if not keys:
+        return prior, set()
+
+    def off(f: np.ndarray) -> np.ndarray:
+        return np.linalg.norm(apply_lin(f, src) - dst, axis=1)
+
+    cands = [prior]
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            if float(np.linalg.norm(src[i] - src[j])) < span:
+                continue
+            f = sim_fit(src[[i, j]], dst[[i, j]])
+            if f is not None and abs(sim_pose(f)[0]) <= 4 * ROT_LIMIT:
+                cands.append(f)
+    fit = max(cands, key=lambda f: (int((off(f) < tol).sum()), -float(np.median(off(f)))))
     for _ in range(4):
-        off = miss(fit)
-        tol = min(max(0.08 * diag, 1.5 * float(np.median(off))), 0.25 * diag)
-        sel = off < tol
-        if sel.sum() < 3:
+        sel = off(fit) < tol
+        if sel.sum() < 2:
             break
-        fit = np.linalg.lstsq(a[sel], alldst[sel], rcond=None)[0]
-    keys = [k for k, e in zip(keys, miss(fit)) if e < 0.12 * diag]
+        f = sim_upright(src[sel], dst[sel])
+        if f is None:
+            break
+        fit = f
+    idx = [i for i, k in enumerate(keys) if k in (keep := drop_lonely({k for k, g in zip(keys, off(fit) < tol)
+                                                                       if g}))]
+    wide = len(idx) > 1 and float(np.linalg.norm(src[idx][:, None] - src[idx], axis=-1).max()) >= span
+    fit = sim_upright(src[idx], dst[idx]) if wide else None
+    return (fit, keep) if fit is not None else (prior, set())
+
+
+def axis_fit(src: np.ndarray, dst: np.ndarray, scale: float) -> np.ndarray:
+    """Upright axis-aligned map: free x and y scale, no rotation, no shear, the uniform scale where blind."""
+    s, t = [scale, -scale], [0.0, 0.0]
+    for k in (0, 1):
+        if float(np.ptp(src[:, k])) > MIN_SPREAD_CM:
+            s[k] = float(np.linalg.lstsq(np.stack([src[:, k], np.ones(len(src))], 1),
+                                         dst[:, k], rcond=None)[0][0])
+        t[k] = float(dst[:, k].mean() - s[k] * src[:, k].mean())
+    return np.array([[s[0], 0.0], [0.0, s[1]], [t[0], t[1]]])
+
+
+def torso_anchors(mask: np.ndarray, box: tuple[int, int, int, int], data: dict,
+                  lay: tuple[float, float, float, float]) -> tuple:
+    """Torso hem and top read the same way in both spaces: the central band carries no sleeve."""
+    ba, bb, _top, hem = box
+    lo, hi = ba + int(0.3 * (bb - ba)), ba + int(0.7 * (bb - ba))
+    rows = np.nonzero(mask[:, lo:hi + 1].any(1))[0]
+    pts = torso_pts(data)
+    x0, x1 = float(pts[:, 0].min()), float(pts[:, 0].max())
+    mid = pts[np.abs(pts[:, 0] - 0.5 * (x0 + x1)) <= 0.2 * (x1 - x0)]
+    out = [([0.5 * (x0 + x1), lay[3]], [0.5 * (ba + bb), float(hem)])]
+    if len(rows) and len(mid):
+        out.append(([0.5 * (x0 + x1), float(mid[:, 1].max())], [0.5 * (lo + hi), float(rows.min())]))
+    return tuple(out)
+
+
+def fit_warp(layout: dict, found: dict, prior: np.ndarray, diag: float, allow: tuple[str, ...],
+             uniform: bool, anchors: tuple = ()) -> tuple[object, str, list[str], float, np.ndarray]:
+    """Layout cm -> cutout px: an upright similarity for tops, the trimmed affine for bottoms, then TPS."""
+    keys = [k for k in layout if k in found and k in allow]
     src = np.array([layout[k] for k in keys], float).reshape(-1, 2)
     dst = np.array([found[k] for k in keys], float).reshape(-1, 2)
-    cm = math.sqrt(max(abs(np.linalg.det(fit[:2])), 1e-9))
-    if len(keys) < 3:
-        sim = anchor_prior(layout, found, tuple(keys)) if len(keys) == 2 else None
-        pick, mode = (prior, "prior") if sim is None else (sim, "similarity")
-        left = np.concatenate([src, np.ones((len(src), 1))], 1) @ pick - dst if len(keys) else dst
-        rms = float(np.sqrt((np.linalg.norm(left, axis=1) ** 2).mean())) / cm if len(keys) else float("nan")
-        return (lambda p: np.concatenate([p, np.ones((len(p), 1))], 1) @ pick), mode, keys, rms
-    a = np.concatenate([src, np.ones((len(src), 1))], 1)
-    lin = np.linalg.lstsq(a, dst, rcond=None)[0]
-    rms = float(np.sqrt((np.linalg.norm(a @ lin - dst, axis=1) ** 2).mean())) / cm
-    if len(keys) < 5:
-        return (lambda p: np.concatenate([p, np.ones((len(p), 1))], 1) @ lin), "affine", keys, rms
-    lo, hi = src.min(0), src.max(0)
-    pad = 0.4 * (hi - lo)
+    span = SPAN_FRAC * float(np.ptp(src[:, 0])) if len(src) else 0.0
+    if uniform:
+        lin, keep = robust_sim(keys, src, dst, TOL_FRAC * diag, prior, span)
+        mode = "similarity"
+        hold = [i for i, k in enumerate(keys) if k in keep]
+        # the uniform fit rejects its own outliers, then the torso top carries the height it cannot see
+        if anchors:
+            ax = axis_fit(np.concatenate([src[hold], [a[0] for a in anchors]]),
+                          np.concatenate([dst[hold], [a[1] for a in anchors]]), sim_pose(lin)[1])
+            ratio = abs(ax[0, 0] / ax[1, 1]) if ax[1, 1] else 0.0
+            if 1 / RATIO_MAX <= ratio <= RATIO_MAX:
+                lin, mode = ax, "upright"
+    else:
+        lin, mode = prior, "affine"
+        for _ in range(4):
+            off = np.linalg.norm(apply_lin(lin, src) - dst, axis=1)
+            sel = off < min(max(0.08 * diag, 1.5 * float(np.median(off))), 0.25 * diag)
+            if sel.sum() < 3:
+                break
+            lin = np.linalg.lstsq(np.concatenate([src[sel], np.ones((int(sel.sum()), 1))], 1),
+                                  dst[sel], rcond=None)[0]
+        keep = drop_lonely({k for k, e in zip(keys, np.linalg.norm(apply_lin(lin, src) - dst, axis=1))
+                            if e < KEEP_FRAC * diag})
+        idx = [i for i, k in enumerate(keys) if k in keep]
+        if len(idx) >= 3:
+            lin = np.linalg.lstsq(np.concatenate([src[idx], np.ones((len(idx), 1))], 1), dst[idx],
+                                  rcond=None)[0]
+    used = [k for k in keys if k in keep]
+    idx = [i for i, k in enumerate(keys) if k in keep]
+    cm = math.sqrt(max(abs(np.linalg.det(lin[:2])), 1e-9))
+    rms = float(np.sqrt((np.linalg.norm(apply_lin(lin, src[idx]) - dst[idx], axis=1) ** 2).mean())) / cm \
+        if idx else float("nan")
+    if len(idx) < TPS_MIN:
+        return (lambda p: apply_lin(lin, p)), ("prior" if not idx else mode), used, rms, lin
+    s, d = src[idx], dst[idx]
+    lo, hi = s.min(0), s.max(0)
+    pad = 0.4 * np.maximum(hi - lo, 1.0)
     box = np.array([[lo[0] - pad[0], lo[1] - pad[1]], [hi[0] + pad[0], lo[1] - pad[1]],
                     [lo[0] - pad[0], hi[1] + pad[1]], [hi[0] + pad[0], hi[1] + pad[1]]])
-    src = np.concatenate([src, box])
-    dst = np.concatenate([dst, np.concatenate([box, np.ones((4, 1))], 1) @ lin])
-    rbf = RBFInterpolator(src, dst, kernel="thin_plate_spline", smoothing=1.0, degree=1)
+    # a spline chases bad landmarks, so it is smoothed at the scale of the residuals it was fitted on
+    rbf = RBFInterpolator(np.concatenate([s, box]), np.concatenate([d, apply_lin(lin, box)]),
+                          kernel="thin_plate_spline", degree=1,
+                          smoothing=1.0 if rms <= TPS_RMS_CM else (rms * cm) ** 2)
 
     def warp(p: np.ndarray) -> np.ndarray:
         return np.concatenate([rbf(p[i:i + 400000]) for i in range(0, len(p), 400000)]) if len(p) else p
 
-    return warp, "tps", keys, rms
+    return warp, "tps", used, rms, lin
+
+
+def sleeve_axis(data: dict, name: str, cuff: list | None) -> np.ndarray | None:
+    """The panel's own armhole centre and cuff centre in layout cm: its grain axis, whatever the arm pose."""
+    p = data["panels"][name]
+    a = np.asarray(p["layout"]["affine"], float)
+    ends = {}
+    for lab in ("armhole", "hem"):
+        polys = [np.asarray(e["polyline_cm"], float) for e in p["edges"] if e["label"] == lab]
+        if polys:
+            ends[lab] = apply_affine(a, np.concatenate(polys)).mean(0)
+    if "armhole" not in ends or ("hem" not in ends and cuff is None):
+        return None
+    return np.stack([ends["armhole"], ends.get("hem", np.asarray(cuff, float))])
+
+
+def sleeve_sim(data: dict, name: str, warp, layout: dict, found: dict, side: str,
+               scale: float) -> np.ndarray | None:
+    """Per-sleeve map pinned at the armhole the torso warp already placed, onto the photo's own sleeve axis."""
+    cuff = found.get(f"cuff_{side}")
+    src = sleeve_axis(data, name, layout.get(f"cuff_{side}"))
+    if cuff is None or src is None or float(np.linalg.norm(src[1] - src[0])) < 4.0:
+        return None
+    seam = [layout[k] for k in (f"shoulder_{side}", f"armpit_{side}") if k in layout]
+    hole = np.mean(seam, 0)[None] if len(seam) == 2 else src[:1]
+    dst = np.stack([warp(hole)[0], np.asarray(cuff, float)])
+    s = float(np.linalg.norm(dst[1] - dst[0])) / float(np.linalg.norm(src[1] - src[0]))
+    if not SLEEVE_SCALE[0] * scale <= s <= SLEEVE_SCALE[1] * scale:
+        return None
+    return sim_fit(src, dst)
+
+
+def warp_jac(warp, p: np.ndarray, h: float = 0.5) -> np.ndarray:
+    """Local layout cm -> px linear part by central differences, so a spline reports like a matrix."""
+    q = warp(np.array([[p[0] - h, p[1]], [p[0] + h, p[1]], [p[0], p[1] - h], [p[0], p[1] + h]], float))
+    return np.stack([(q[1] - q[0]) / (2 * h), (q[3] - q[2]) / (2 * h)], 1)
+
+
+def warp_pose(j: np.ndarray) -> tuple[float, float, float]:
+    """Rotation deg and both scales of that linear part, with the layout-to-image y flip undone."""
+    u, s, vt = np.linalg.svd(j * np.array([1.0, -1.0]))
+    r = u @ vt
+    # a map that does not flip y is not a flat lay at all, so it reports as fully turned over
+    rot = math.degrees(math.atan2(r[1, 0], r[0, 0])) if float(np.linalg.det(j)) < 0 else 180.0
+    return rot, float(s[0]), float(s[1])
+
+
+def unwarp(warp, target: np.ndarray, start: np.ndarray, steps: int = 6) -> np.ndarray:
+    """Layout cm of a pixel: Newton steps on the warp, so the spline inverts as well as the linear part."""
+    q = np.asarray(start, float)
+    for _ in range(steps):
+        j = warp_jac(warp, q)
+        if abs(float(np.linalg.det(j))) < 1e-9:
+            break
+        q = q + np.linalg.solve(j, np.asarray(target, float) - warp(q[None])[0])
+    return q
+
+
+def panel_cover(data: dict, names: set[str], quad: np.ndarray, res: float = 0.25) -> float | None:
+    """Share of a print area in layout cm that lands on these panels' front-lay outlines."""
+    polys = [apply_affine(np.asarray(p["layout"]["affine"], float), np.asarray(p["outline_cm"], float))
+             for n, p in data["panels"].items() if n in names and p["layout"]["affine"]]
+    if not polys:
+        return None
+    pts = np.concatenate(polys + [quad])
+    f = frame_of([pts[:, 0].min(), pts[:, 1].min(), pts[:, 0].max(), pts[:, 1].max()], 1.0 / res)
+    hit = np.zeros((f["h"], f["w"]), bool)
+    for q in polys:
+        hit |= frame_mask(f, q)
+    area = frame_mask(f, quad)
+    return round(float((area & hit).sum()) / max(int(area.sum()), 1), 3)
+
+
+def print_px(box: tuple[int, int, int, int], marks: dict, upper: bool) -> list[float]:
+    """The lay's own print area when the spec names no placement box: the chest, or the front of a leg."""
+    ba, bb, top, hem = box
+    if upper:
+        rows = [marks[k][1] for k in ("armpit_left", "armpit_right") if k in marks]
+        return [0.5 * (ba + bb), 0.5 * (hem + (min(rows) if rows else top + 0.45 * (hem - top)))]
+    a = marks.get("waist_left", [0.5 * (ba + bb), float(top)])
+    b = marks.get("hem_inner_left", marks.get("hem_outer_left", [float(bb), float(hem)]))
+    return [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])]
+
+
+def register(data: dict, warp, probes: list[dict], upper: bool) -> list[dict]:
+    """Where each print area lands in layout cm, and whether the map is upright and uniform getting there."""
+    marks = data["landmarks"]["front"]
+    low = [marks[k][1] for k in ("armpit_left", "armpit_right") if k in marks]
+    high = [marks[k][1] for k in ("neck_left", "neck_right") if k in marks]
+    out = []
+    for pr in probes:
+        q = unwarp(warp, np.asarray(pr["px"], float), np.asarray(pr["start"], float))
+        j = warp_jac(warp, q)
+        rot, s0, s1 = warp_pose(j)
+        quad = q + (np.asarray(pr["poly"], float) - np.asarray(pr["px"], float)) @ np.linalg.inv(j).T
+        chest = None
+        if upper and low and high and pr["high"]:
+            slack = CHEST_SLACK * (max(high) - min(low))
+            chest = bool(min(low) - slack <= q[1] <= max(high) + slack)
+        out.append({"what": pr["what"], "cm": [round(float(v), 1) for v in q], "rot_deg": round(rot, 2),
+                    "ratio": round(max(s0, s1) / max(min(s0, s1), 1e-9), 3),
+                    "px_per_cm": round(0.5 * (s0 + s1), 2), "chest": chest,
+                    "cover": panel_cover(data, pr["panels"], quad)})
+    return out
 
 
 def flatten_shading(img: np.ndarray, valid: np.ndarray, size: int) -> np.ndarray:
@@ -666,6 +917,14 @@ def render_panel(name: str, p: dict, ctx: dict) -> dict:
         if cut is not None:
             cover = sample_rgb(ctx["alpha"][..., None].astype(np.float32), cut).reshape(f["h"], f["w"])
             cover = np.clip(ndimage.gaussian_filter(np.where(cover > 0.5, 1.0, 0.0), 1.0), 0, 1)[..., None]
+            ph, pw = ctx["albedo"].shape[:2]
+            for pm in ctx["placements"]:
+                if name in pm["panels"]:
+                    continue
+                bx = [pm["box"][0] * pw, pm["box"][1] * ph, pm["box"][2] * pw, pm["box"][3] * ph]
+                off = np.minimum.reduce([cut[:, 0] - bx[0], bx[2] - cut[:, 0],
+                                         cut[:, 1] - bx[1], bx[3] - cut[:, 1]])
+                cover = cover * np.clip(-off / 1.5 + 0.5, 0, 1).reshape(f["h"], f["w"], 1)
             photo = sample_rgb(ctx["albedo"], cut).reshape(f["h"], f["w"], 3)
             rgb = photo * cover + rgb * (1 - cover)
 
@@ -824,21 +1083,22 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
     tint = tint_field(albedo, mask, like)
     marks, mark_notes, box = detect_marks(mask, data["garment"])
     lay_marks = dict(data["landmarks"]["front"])
-    allow = TORSO_MARKS if data["garment"] == "upper" else tuple(lay_marks)
-    prior, diag = bbox_prior(data, box)
-    found = dict(marks)
-    if data["garment"] == "upper":
-        # a flat-laid tee hides its neckline behind the back collar, so the torso box carries the height
-        pts = torso_pts(data)
-        corners = [(pts[:, 0].min(), pts[:, 1].max()), (pts[:, 0].max(), pts[:, 1].max()),
-                   (pts[:, 0].min(), pts[:, 1].min()), (pts[:, 0].max(), pts[:, 1].min())]
-        for i, (lx, ly) in enumerate(corners):
-            lay_marks[f"box{i}"] = [float(lx), float(ly)]
-            found[f"box{i}"] = [float(box[0] if i % 2 == 0 else box[1]), float(box[2] if i < 2 else box[3])]
-        allow = tuple(allow) + tuple(f"box{i}" for i in range(4))
-    warp, warp_mode, used, rms = fit_warp(lay_marks, found, [prior], diag, allow)
+    upper = data["garment"] == "upper"
+    allow = TORSO_MARKS if upper else tuple(lay_marks)
+    pts = torso_pts(data)
+    lay = layout_box(data) if upper else (
+        float(pts[:, 0].min()), float(pts[:, 0].max()), float(pts[:, 1].max()), float(pts[:, 1].min()))
+    ys0, xs0 = np.nonzero(mask)
+    diag = float(np.hypot(np.ptp(xs0), np.ptp(ys0)))
+    prior = band_prior(lay, box) if upper else bbox_prior(lay, box)
+    anchors = torso_anchors(mask, box, data, lay) if upper else ()
+    warp, warp_mode, used, rms, lin = fit_warp(lay_marks, marks, prior, diag, allow, upper, anchors)
+    scale = sim_pose(lin)[1] if upper else math.sqrt(max(abs(np.linalg.det(lin[:2])), 1e-9))
+    # a torso band that disagrees with the photo's own scale is a crumpled lay, not a registration
+    reg_ok = not upper or SCALE_GATE[0] <= scale / max(photo_ppc, 1e-6) <= SCALE_GATE[1]
     mark_notes += [f"dropped {k}" for k in marks if k not in used and k in allow]
-    used = [k for k in used if not k.startswith("box")]
+    if not reg_ok:
+        mark_notes.append(f"no registration: {scale:.1f} vs {photo_ppc:.1f} px/cm")
 
     rib_color = {}
     for trim in spec.trims:
@@ -856,7 +1116,7 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
         hit = {n for n, p in data["panels"].items()
                if kind and p["kind"] == kind and (side is None or p["side"] == side)
                and (p["layout"]["view"] == "front" or kind == "hood")}
-        placements.append({"box": pm.box, "kind": pm.kind.value, "panels": hit})
+        placements.append({"box": pm.box, "kind": pm.kind.value, "panels": hit, "what": pm.panel.value})
 
     source_valid = mask.copy()
     h, w = mask.shape
@@ -871,17 +1131,19 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
     root = root or next(iter(data["panels"]))
     phase, phase_info = phase_offsets(data, spec.repeats, root)
 
-    # only the torso carries the photo: sleeve lay angle is the seller's, the sleeve layout angle is the sim's
+    # the torso warp is fitted on torso landmarks only: the sleeve lay angle is the seller's, not the sim's
     warps = {n: warp for n, p in data["panels"].items()
-             if p["kind"] == "front" and p["layout"]["view"] == "front"}
+             if reg_ok and p["kind"] == "front" and p["layout"]["view"] == "front"}
     for side in ("left", "right"):
-        want = {n for pm in placements for n in pm["panels"] if data["panels"][n]["kind"] == "sleeve"}
-        arm = anchor_prior(lay_marks, marks, (f"cuff_{side}", f"shoulder_{side}"))
-        if not want or arm is None:
-            continue
+        want = {n for n, p in data["panels"].items()
+                if p["kind"] == "sleeve" and p["side"] == side and p["layout"]["view"] == "front"
+                and (fallback or any(n in pm["panels"] for pm in placements))}
         for n in want:
-            if data["panels"][n]["side"] == side:
-                warps[n] = lambda p, f=arm: np.concatenate([p, np.ones((len(p), 1))], 1) @ f
+            arm = sleeve_sim(data, n, warp, lay_marks, marks, side, scale) if reg_ok and upper else None
+            if arm is None:
+                mark_notes.append(f"{n} synthesised")
+                continue
+            warps[n] = lambda p, f=arm: apply_lin(f, p)
 
     targets = {id(t): trim_targets(data, t, data["garment"]) for t in spec.trims}
     ctx = {"ppc": ppc, "collapse": collapse_period_cm, "ground": ground, "rib_color": rib_color,
@@ -901,6 +1163,26 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
                         "bands": r["bands"],
                         "offsets": [round(ph["offsets"][name], 4) for ph in phase]}
 
+    front = {n for n, p in data["panels"].items() if p["kind"] == "front" and p["layout"]["view"] == "front"}
+    start = np.array([0.5 * (pts[:, 0].min() + pts[:, 0].max()), 0.5 * (pts[:, 1].min() + pts[:, 1].max())])
+    # only a print the photo puts in the upper garment is held to chest height; the spec places others low
+    chest_row = ys0.min() + CHEST_FRAC * np.ptp(ys0)
+    probes = [{"what": pm["what"], "panels": pm["panels"], "start": start,
+               "high": bool(0.5 * (pm["box"][1] + pm["box"][3]) * h <= chest_row),
+               "px": [0.5 * (pm["box"][0] + pm["box"][2]) * w, 0.5 * (pm["box"][1] + pm["box"][3]) * h],
+               "poly": [[pm["box"][0] * w, pm["box"][1] * h], [pm["box"][2] * w, pm["box"][1] * h],
+                        [pm["box"][2] * w, pm["box"][3] * h], [pm["box"][0] * w, pm["box"][3] * h]]}
+              for pm in placements if any(n in front for n in pm["panels"])]
+    if fallback and not probes:
+        aim = {n for n in front if upper or data["panels"][n]["side"] == "left"}
+        px = print_px(box, marks, upper)
+        r = 0.12 * (box[1] - box[0])
+        probes = [{"what": "print area", "panels": aim, "start": start, "px": px, "high": False,
+                   "poly": [[px[0] - r, px[1] - r], [px[0] + r, px[1] - r],
+                            [px[0] + r, px[1] + r], [px[0] - r, px[1] + r]]}]
+    reg = register(data, warp, probes, upper) if reg_ok and probes else []
+    fit_ratio = warp_pose(lin[:2].T)[1] / max(warp_pose(lin[:2].T)[2], 1e-9)
+
     live = [r.period_cm for r in spec.repeats if r.period_cm >= collapse_period_cm]
     info = {"safe": out_dir.name, "ppc": ppc, "kind": spec.kind.value,
             "mode": "fallback" if fallback else "pattern",
@@ -911,6 +1193,8 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
                                                "rms_cm": round(rms, 2),
                                                "found": {k: [round(v, 1) for v in pt] for k, pt in marks.items()},
                                                "notes": mark_notes},
+            "register": {"scale_px_per_cm": round(scale, 2), "photo_px_per_cm": round(photo_ppc, 2),
+                         "fit_ratio": round(fit_ratio, 3), "accepted": bool(reg_ok), "probes": reg},
             "back_photo": back_photo, "panels": report, "seconds": round(time.time() - t0, 2)}
 
     if write:
@@ -977,6 +1261,21 @@ def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple
             bad.append(f"{name}: raster does not cover bbox+margin")
         if not np.isfinite(r["rgb"]).all() or r["rgb"].min() < 0 or r["rgb"].max() > 255:
             bad.append(f"{name}: values out of 0..255")
+
+    rg = info["register"]
+    if rg["probes"] and rg["fit_ratio"] > RATIO_MAX:
+        bad.append(f"registration scale ratio {rg['fit_ratio']:.2f}")
+    # a leg lies at whatever angle the seller left it; only the upright torso fit is held to the tight gate
+    gate = ROT_GATE if info["landmarks"]["mode"] in ("upright", "similarity", "prior") else 2 * ROT_GATE
+    for pr in rg["probes"]:
+        if abs(pr["rot_deg"]) > gate:
+            bad.append(f"{pr['what']} print rotated {pr['rot_deg']:.1f} deg")
+        if pr["cover"] is not None and pr["cover"] < COVER_MIN:
+            bad.append(f"{pr['what']} print at {pr['cm']} cm, {pr['cover']:.0%} on its panels")
+        if pr["chest"] is False:
+            bad.append(f"{pr['what']} print at {pr['cm'][1]} cm, not chest height")
+    stats["register"] = [(p["what"], p["rot_deg"], p["ratio"], p["cm"], p["cover"], p["chest"])
+                         for p in rg["probes"]]
 
     for k, s in enumerate(info["phase"]["sets"]):
         if s["tree_residual"] > 0.02:
@@ -1064,11 +1363,20 @@ def main() -> None:
         ln = " ".join(f"s{k}:{v.get('angle_err_deg', '-')}deg/{v.get('spacing_cm', '-')}cm/"
                       f"{v['lines_top']}in{v['cm_top']}cm>{v['lines_bottom']}in{v['cm_bottom']}cm"
                       for k, v in stats["lines"]) or "-"
+        rg = info["register"]
+        shots = []
+        for p in rg["probes"]:
+            cov = "-" if p["cover"] is None else f"{p['cover']:.0%}"
+            band = "" if p["chest"] is None else ("/chest" if p["chest"] else "/NOTCHEST")
+            shots.append(f"{p['what']}:{p['rot_deg']:+.1f}deg/x{p['ratio']:.2f}/"
+                         f"({p['cm'][0]:.0f},{p['cm'][1]:.0f})cm/{cov}{band}")
+        rp = " ".join(shots) or ("-" if rg["accepted"] else "none")
         print(f"{info['safe']} | {len(info['panels'])} panels | {info['mode']} | ground "
               f"#{''.join(f'{v:02x}' for v in info['ground'])}{'*' if info['ground_from_photo'] else ''} | "
               f"lm {info['landmarks']['pairs']} {info['landmarks']['mode']} "
               f"rms {info['landmarks']['rms_cm']}cm"
               f"{' ' + ';'.join(info['landmarks']['notes']) if info['landmarks']['notes'] else ''} | "
+              f"reg {rg['scale_px_per_cm']}px/cm x{rg['fit_ratio']} {rp} | "
               f"phase {ph} | trim {tr} | lines {ln} | {info['seconds']}s"
               + (f" | ISSUES {len(bad)}: {'; '.join(bad[:3])}" if bad else ""))
         if bad:
