@@ -215,6 +215,100 @@ export interface ApiError {
   detail?: string | null;
 }
 
+// ───────────── v3: garments, listings, photos ─────────────
+
+export type PhotoState = "spread" | "folded" | "bunched" | "unknown";
+export type Wrinkle = "low" | "medium" | "high" | "unknown";
+export type ListingStatus = "active" | "sold" | "gone";
+export type PatternKind =
+  | "solid" | "stripes" | "pinstripes" | "plaid" | "check" | "houndstooth" | "camo" | "floral" | "graphic" | "other";
+
+export interface Photo {
+  id: number;
+  listing_id: string;
+  idx: number;
+  url: string;
+  width?: number | null;
+  height?: number | null;
+  view: ImageView;
+  rotation: 0 | 90 | 180 | 270;
+  state: PhotoState;
+  wrinkle: Wrinkle;
+}
+
+export interface StripeSet {
+  direction: "grain" | "cross" | "bias";
+  period_cm: number;
+  line_width_cm: number;
+  colors: string[];
+  offset_cm: number;
+}
+
+export interface Trim {
+  kind: "side_stripe" | "piping" | "waistband" | "cuff" | "hem_band" | "placket" | "yoke" | "other";
+  placement: "outseam" | "inseam" | "center_front" | "center_back" | "shoulder" | "sleeve_outer" | "hem" | "waist" | "cuff" | "other";
+  colors: string[];
+  widths_cm: number[];
+  gap_cm: number;
+  extent: "full" | "upper" | "lower";
+}
+
+export interface Placement {
+  kind: "logo" | "print" | "patch" | "pocket" | "text" | "other";
+  box: [number, number, number, number];
+  panel: "front" | "back" | "left_front" | "right_front" | "left_back" | "right_back" | "left_sleeve" | "right_sleeve" | "hood" | "other";
+}
+
+export interface PatternSpec {
+  kind: PatternKind;
+  base_color?: string | null;
+  repeats: StripeSet[];
+  trims: Trim[];
+  placements: Placement[];
+  confidence: number;
+}
+
+export interface ListingOffer {
+  id: string;
+  source: Source;
+  url: string;
+  title: string;
+  description?: string | null;
+  price: Money;
+  shipping?: Money | null;
+  seller?: string | null;
+  size_raw?: string | null;
+  brand_raw?: string | null;
+  stated_condition: Condition;
+  assessed_condition: Condition;
+  status: ListingStatus;
+  photos: Photo[];
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface Garment {
+  id: string;
+  tags?: ItemTags | null;
+  pattern_spec?: PatternSpec | null;
+  best_photo?: Photo | null;
+  listings: ListingOffer[];
+  best_listing_id: string;
+  asset?: Asset3D | null;
+}
+
+export interface GarmentsResponse {
+  garments: Garment[];
+  total: number;
+}
+
+export interface OutfitResponseV3 {
+  query: StyleQuery;
+  outfits: Outfit[]; // OutfitPiece.item_id holds a garment id in v3
+  garments: Record<string, Garment>;
+  took_ms: number;
+}
+
 // ───────────── helpers ─────────────
 
 export const formatMoney = (m: Money) =>
@@ -222,3 +316,6 @@ export const formatMoney = (m: Money) =>
 
 /** Render order on avatar: inner layers first. */
 export const SLOT_LAYER_ORDER: Slot[] = ["bottom", "top", "onepiece", "outer", "shoes", "accessory"];
+
+export const listingTotalCents = (l: ListingOffer) => l.price.cents + (l.shipping?.cents ?? 0);
+export const bestListing = (g: Garment) => g.listings.find((l) => l.id === g.best_listing_id) ?? g.listings[0];

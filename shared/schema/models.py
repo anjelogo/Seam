@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -323,6 +323,127 @@ class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None
 
+# ───────────────────────── v3: garments, listings, photos ─────────────────────────
+# A Garment is one physical object; each ListingOffer is one store selling it.
+# Garment-level facts: tags, best photo, cutout, 3D asset. Listing-level facts: price, shipping, condition, seller, status.
+
+class PhotoState(str, Enum):
+    spread = "spread"
+    folded = "folded"
+    bunched = "bunched"
+    unknown = "unknown"
+
+class Wrinkle(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    unknown = "unknown"
+
+class ListingStatus(str, Enum):
+    active = "active"
+    sold = "sold"
+    gone = "gone"
+
+class Photo(BaseModel):
+    id: int
+    listing_id: str
+    idx: int
+    url: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    view: ImageView = ImageView.unknown
+    rotation: Literal[0, 90, 180, 270] = 0    # clockwise degrees to make the garment upright, applied before cutout
+    state: PhotoState = PhotoState.unknown
+    wrinkle: Wrinkle = Wrinkle.unknown
+
+class PatternKind(str, Enum):
+    solid = "solid"
+    stripes = "stripes"
+    pinstripes = "pinstripes"
+    plaid = "plaid"
+    check = "check"
+    houndstooth = "houndstooth"
+    camo = "camo"
+    floral = "floral"
+    graphic = "graphic"
+    other = "other"
+
+class StripeSet(BaseModel):
+    """A repeating pattern relative to the fabric grain (grain = garment up/down)."""
+    direction: Literal["grain", "cross", "bias"] = "grain"   # grain = vertical on a leg or torso
+    period_cm: float = Field(gt=0, le=60)
+    line_width_cm: float = Field(gt=0, le=30)
+    colors: list[str] = Field(min_length=1)                   # hex; cycles across the repeat
+    offset_cm: float = 0.0
+
+class Trim(BaseModel):
+    """A placed linear feature that follows a seam or edge, e.g. track-pant side stripes."""
+    kind: Literal["side_stripe", "piping", "waistband", "cuff", "hem_band", "placket", "yoke", "other"]
+    placement: Literal["outseam", "inseam", "center_front", "center_back", "shoulder", "sleeve_outer", "hem", "waist", "cuff", "other"]
+    colors: list[str] = Field(min_length=1)                   # one per band, outermost first
+    widths_cm: list[float] = Field(min_length=1)               # same length as colors
+    gap_cm: float = 0.0                                        # between bands
+    extent: Literal["full", "upper", "lower"] = "full"
+
+class Placement(BaseModel):
+    """A one-off print/logo/patch cut from the cutout and placed on a panel."""
+    kind: Literal["logo", "print", "patch", "pocket", "text", "other"]
+    box: tuple[float, float, float, float]                    # [x0,y0,x1,y1] 0..1 in clean_image
+    panel: Literal["front", "back", "left_front", "right_front", "left_back", "right_back", "left_sleeve", "right_sleeve", "hood", "other"] = "front"
+
+class PatternSpec(BaseModel):
+    kind: PatternKind = PatternKind.solid
+    base_color: Optional[str] = None                           # hex of the ground fabric
+    repeats: list[StripeSet] = []
+    trims: list[Trim] = []
+    placements: list[Placement] = []
+    confidence: float = Field(ge=0, le=1, default=0.5)
+
+class ListingOffer(BaseModel):
+    id: str                                                    # f"{source}:{source_id}"
+    source: Source
+    url: str
+    title: str
+    description: Optional[str] = None
+    price: Money
+    shipping: Optional[Money] = None
+    seller: Optional[str] = None
+    size_raw: Optional[str] = None
+    brand_raw: Optional[str] = None
+    stated_condition: Condition = Condition.unknown            # what the seller claims
+    assessed_condition: Condition = Condition.unknown          # what our model sees in this listing's photos (shown in UI)
+    status: ListingStatus = ListingStatus.active
+    photos: list[Photo] = []
+    first_seen: datetime = Field(default_factory=_now)
+    last_seen: datetime = Field(default_factory=_now)
+
+    def total_cents(self) -> int:
+        return self.price.cents + (self.shipping.cents if self.shipping else 0)
+
+class Garment(BaseModel):
+    id: str                                                    # g_<ulid>
+    tags: Optional[ItemTags] = None                            # garment-level, from all listings' photos
+    pattern_spec: Optional[PatternSpec] = None                 # drives texturing
+    best_photo: Optional[Photo] = None
+    listings: list[ListingOffer] = Field(min_length=1)         # active first, then cheapest total
+    best_listing_id: str                                       # cheapest active price + shipping: the one price the card shows
+    asset: Optional[Asset3D] = None
+
+    def best_listing(self) -> ListingOffer:
+        return next(l for l in self.listings if l.id == self.best_listing_id)
+
+class GarmentsResponse(BaseModel):
+    garments: list[Garment]
+    total: int
+
+class OutfitResponseV3(BaseModel):
+    query: StyleQuery
+    outfits: list[Outfit]                                      # OutfitPiece.item_id holds a garment id in v3
+    garments: dict[str, Garment]
+    took_ms: int = 0
+
 Item.model_rebuild()
 StyleQuery.model_rebuild()
 OutfitResponse.model_rebuild()
+Garment.model_rebuild()
+OutfitResponseV3.model_rebuild()
