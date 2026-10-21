@@ -38,6 +38,7 @@ class TrimKind(str, Enum):
     cuff = "cuff"
     waistband = "waistband"
     collar = "collar"
+    line = "line"
     other = "other"
 
 
@@ -76,8 +77,19 @@ class PlacementPanel(str, Enum):
     right_sleeve = "right_sleeve"
     left_leg = "left_leg"
     right_leg = "right_leg"
+    left_leg_front = "left_leg_front"
+    right_leg_front = "right_leg_front"
+    left_leg_back = "left_leg_back"
+    right_leg_back = "right_leg_back"
     hood = "hood"
     other = "other"
+
+
+class SubBand(BaseModel):
+    """A line inside one repeat of a StripeSet, e.g. a thin accent line next to the main stripe."""
+    offset_cm: float
+    width_cm: float = Field(gt=0)
+    color: Color
 
 
 class StripeSet(BaseModel):
@@ -86,6 +98,7 @@ class StripeSet(BaseModel):
     line_width_cm: float = Field(gt=0)
     colors: list[Color] = []
     offset_cm: float = 0.0
+    sub_bands: list[SubBand] = []
 
 
 class Trim(BaseModel):
@@ -96,6 +109,9 @@ class Trim(BaseModel):
     # between bands, and between an edge and its first band for hem/waist/cuff trims
     gap_cm: float = Field(ge=0, default=0.0)
     extent: TrimExtent = TrimExtent.full
+    # kind=line only: a curved design line (not a seam), as (x, y) points in 0..1 of the cutout image,
+    # mapped onto panel cm through the same registration/placement machinery as a Placement box
+    path: list[tuple[float, float]] = []
 
 
 class Placement(BaseModel):

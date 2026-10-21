@@ -223,12 +223,14 @@ def semantic_errors(spec: PatternSpec) -> list[str]:
     for i, t in enumerate(spec.trims):
         if t.kind in (TrimKind.stripe, TrimKind.piping, TrimKind.binding) and not t.widths_cm:
             errors.append(f"trims[{i}]: kind={t.kind.value} needs non-empty widths_cm")
+        if t.kind == TrimKind.line and len(t.path) < 2:
+            errors.append(f"trims[{i}]: kind=line needs at least 2 path points")
     for i, pl in enumerate(spec.placements):
         x0, y0, x1, y1 = pl.box
         if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
             errors.append(f"placements[{i}]: box {pl.box} must satisfy 0<=x0<x1<=1 and 0<=y0<y1<=1")
-        if pl.panel == PlacementPanel.back:
-            errors.append(f"placements[{i}]: panel=back is never allowed (no back photo was provided)")
+        if pl.panel in (PlacementPanel.back, PlacementPanel.left_leg_back, PlacementPanel.right_leg_back):
+            errors.append(f"placements[{i}]: panel={pl.panel.value} is never allowed (no back photo was provided)")
     needs_repeats = spec.kind in (PatternKind.stripes, PatternKind.pinstripes, PatternKind.plaid)
     if needs_repeats and not spec.repeats:
         errors.append(f"kind={spec.kind.value} requires a non-empty repeats list")

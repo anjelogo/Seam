@@ -128,6 +128,19 @@ def limb_up(p: dict) -> np.ndarray:
     return n if float((p["outline"].mean(0) - hem.mean(0)) @ n) > 0 else -n
 
 
+def edge_chord_up(p: dict, label: str, square: bool) -> np.ndarray | None:
+    """Unit direction square to (square=True) or along (square=False) the longest `label` edge's chord,
+    pointing away from that edge: a collar's grain square to its neckline, a hood's grain along its centre seam."""
+    edges = [p["polys"][e] for e, lab in enumerate(p["labels"]) if lab == label]
+    if not edges:
+        return None
+    edge = max(edges, key=lambda q: float(np.linalg.norm(q[-1] - q[0])))
+    chord = edge[-1] - edge[0]
+    norm = max(float(np.linalg.norm(chord)), 1e-9)
+    n = (np.array([-chord[1], chord[0]]) if square else chord) / norm
+    return n if float((p["outline"].mean(0) - edge.mean(0)) @ n) > 0 else -n
+
+
 def classify(name: str, pan: dict, world: np.ndarray) -> dict:
     parts = set(name.lower().split("_"))
     low = name.lower()
@@ -340,6 +353,12 @@ def build_panels(spec_path: Path) -> dict:
     for p in P.values():
         if p["family"] == "arm":
             p["up"] = limb_up(p)
+        elif p["family"] == "collar":
+            u = edge_chord_up(p, "neckline", square=True)
+            p["up"] = p["up"] if u is None else u
+        elif p["family"] == "hood":
+            u = edge_chord_up(p, "hood_seam", square=False)
+            p["up"] = p["up"] if u is None else u
 
     garment = "bottom" if any(p["family"] == "leg" for p in P.values()) else "upper"
     out = {"safe": Path(spec_path).parents[2].name,
@@ -349,12 +368,10 @@ def build_panels(spec_path: Path) -> dict:
     for name in order:
         p = P[name]
         grain = p["up"] if (p["up"][1] > 0 or (p["up"][1] == 0 and p["up"][0] > 0)) else -p["up"]
-        view, affine = None, None
-        if p["kind"] not in ("hood", "collar"):
-            view = "front" if p["face"] == "f" else "back"
-            sx = 1.0 if view == "front" else -1.0
-            affine = [[sx * p["R"][0, 0], sx * p["R"][0, 1], sx * p["T"][0]],
-                      [p["R"][1, 0], p["R"][1, 1], p["T"][1]]]
+        view = "front" if p["face"] == "f" else "back"
+        sx = 1.0 if view == "front" else -1.0
+        affine = [[sx * p["R"][0, 0], sx * p["R"][0, 1], sx * p["T"][0]],
+                  [p["R"][1, 0], p["R"][1, 1], p["T"][1]]]
         rec = {"kind": p["kind"], "side": p["side"], "rib": p["rib"],
                "outline_cm": np.round(p["outline"], 3).tolist(),
                "bbox_cm": [round(float(v), 3) for v in (*p["outline"].min(0), *p["outline"].max(0))],

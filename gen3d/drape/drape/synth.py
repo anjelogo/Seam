@@ -18,6 +18,7 @@ from drape._repo import DRAPE, bootstrap
 bootstrap()
 
 from drape.patternspec import PatternSpec, StripeDirection, TrimKind, TrimPlacement  # noqa: E402
+from drape.spec import FFT_MIN_PROFILES, FFT_PEAK_RATIO, MIN_PERIOD_PX  # noqa: E402
 
 MARGIN_CM = 2.0
 PPC = 20.0
@@ -31,6 +32,11 @@ TORSO_MARKS = ("neck_left", "neck_right", "shoulder_left", "shoulder_right", "ar
 PAIRED = (("neck_left", "neck_right"), ("shoulder_left", "shoulder_right"),
           ("armpit_left", "armpit_right"), ("hem_left", "hem_right"), ("waist_left", "waist_right"),
           ("hem_outer_left", "hem_outer_right"), ("hem_inner_left", "hem_inner_right"))
+LINE_PX_MIN = 2.0
+FOLD_MIN_CONC = 0.5
+CAP_SAFETY = 2.5
+CAP_FLOOR_DE = 4.0
+PHASE_MIN_SEAM_CM = 2.0
 TOL_FRAC, KEEP_FRAC, SPAN_FRAC = 0.07, 0.12, 0.45
 ROT_LIMIT, ROT_GATE, RATIO_MAX, MIN_SPREAD_CM, COVER_MIN, CHEST_FRAC = 2.5, 3.0, 2.2, 5.0, 0.5, 0.45
 CHEST_SLACK = 0.3
@@ -90,6 +96,18 @@ def along(poly: np.ndarray, frac: np.ndarray) -> np.ndarray:
     run = np.concatenate([[0.0], np.cumsum(d)])
     t = np.asarray(frac) * run[-1]
     return np.stack([np.interp(t, run, poly[:, 0]), np.interp(t, run, poly[:, 1])], 1)
+
+
+def nearest_arc_frac(poly: np.ndarray, pts: np.ndarray, chunk: int = 20000) -> np.ndarray:
+    """Arc-length fraction of each point's closest sampled location on `poly`."""
+    q = resample(poly, 0.3)
+    run = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(q, axis=0), axis=1))])
+    frac = run / max(run[-1], 1e-9)
+    out = np.empty(len(pts))
+    for i in range(0, len(pts), chunk):
+        d2 = ((pts[i:i + chunk, None, :] - q[None, :, :]) ** 2).sum(-1)
+        out[i:i + chunk] = frac[np.argmin(d2, axis=1)]
+    return out
 
 
 def sample_rgb(img: np.ndarray, xy: np.ndarray) -> np.ndarray:
@@ -172,10 +190,12 @@ def calibrate(albedo: np.ndarray, mask: np.ndarray, base: np.ndarray) -> tuple[n
     return np.median(rgb[like].astype(float), axis=0), like, frac
 
 
-def tint_field(albedo: np.ndarray, mask: np.ndarray, like: np.ndarray) -> np.ndarray:
+def tint_sigma(width_px: float) -> float:
+    return max(TINT_SIGMA * width_px, 2.0)
+
+
+def tint_field(albedo: np.ndarray, mask: np.ndarray, like: np.ndarray, sigma: float) -> np.ndarray:
     """Low-frequency luma of the ground-like pixels only, normalised to its own median."""
-    ys, xs = np.nonzero(mask)
-    sigma = max(TINT_SIGMA * float(xs.max() - xs.min() + 1), 2.0)
     y = srgb_to_linear(albedo[..., :3]) @ [0.2126, 0.7152, 0.0722]
     m = like.astype(float)
     num = ndimage.gaussian_filter(y * m, sigma, mode="nearest")
@@ -183,6 +203,93 @@ def tint_field(albedo: np.ndarray, mask: np.ndarray, like: np.ndarray) -> np.nda
     low = num / np.maximum(den, 1e-6)
     med = float(np.median(low[like])) if like.any() else 1.0
     return np.clip(low / max(med, 1e-6), TINT_LO, TINT_HI).astype(np.float32)
+
+
+def color_profiles(rgb: np.ndarray, mask: np.ndarray, direction: str) -> list[np.ndarray]:
+    """1-D RGB runs across the garment, perpendicular to a repeat's lines (mirrors spec.py's luma profiles)."""
+    ys, xs = np.nonzero(mask)
+    top, bottom, left, right = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    out = []
+    if direction == "grain":
+        y0, y1 = top + int(0.2 * (bottom - top)), top + int(0.8 * (bottom - top))
+        for y in range(y0, y1 + 1):
+            for a, b in runs_of(mask[y]):
+                if b - a >= 8:
+                    out.append(rgb[y, a:b].astype(np.float64))
+    else:
+        x0, x1 = left + int(0.2 * (right - left)), left + int(0.8 * (right - left))
+        for x in range(x0, x1 + 1):
+            for a, b in runs_of(mask[:, x]):
+                if b - a >= 8:
+                    out.append(rgb[a:b, x].astype(np.float64))
+    return out
+
+
+def profile_phase(prof: np.ndarray, period_px: float) -> float:
+    """This profile's own phase (0..1 fraction) of a `period_px` signal, read off one Fourier coefficient."""
+    luma = prof @ np.array([0.2126, 0.7152, 0.0722])
+    z = np.sum((luma - luma.mean()) * np.exp(-2j * np.pi * np.arange(len(luma)) / period_px))
+    return float((np.angle(z) / (2 * np.pi)) % 1.0)
+
+
+def fold_profile(profiles: list[np.ndarray], period_px: float,
+                 n_bins: int = 48) -> tuple[np.ndarray, float] | None:
+    """Average RGB by phase bin: each profile starts at its own mask edge, so its phase is first read off a
+    Fourier coefficient and aligned to the group's circular mean before any profile is folded in.
+
+    Also returns how tightly those per-profile phases agreed (0..1). A draped photo foreshortens the
+    repeat unevenly, so the phases can scatter; folding scattered profiles averages line against ground
+    and cancels the band, leaving a flat profile that must not be read as low contrast."""
+    long = [p for p in profiles if len(p) >= period_px]
+    if len(long) < FFT_MIN_PROFILES:
+        return None
+    phases = np.array([profile_phase(p, period_px) for p in long])
+    conc = float(abs(np.exp(2j * np.pi * phases).mean()))
+    ref = circ_mean(phases * period_px, period_px) / period_px
+    sums = np.zeros((n_bins, 3))
+    counts = np.zeros(n_bins)
+    for prof, ph in zip(long, phases):
+        shift = (ref - ph) * period_px
+        phase = ((np.arange(len(prof)) + shift) % period_px) / period_px
+        b = np.clip((phase * n_bins).astype(int), 0, n_bins - 1)
+        np.add.at(sums, b, prof)
+        np.add.at(counts, b, 1)
+    valid = counts > 0
+    if valid.sum() < 0.5 * n_bins:
+        return None
+    out = np.zeros((n_bins, 3))
+    out[valid] = sums[valid] / counts[valid, None]
+    order = np.arange(n_bins)
+    nearest = order[valid][np.searchsorted(order[valid], order, side="right") - 1]
+    out[~valid] = out[nearest[~valid]]
+    return out, conc
+
+
+def band_window(n_bins: int, width_frac: float, score: np.ndarray) -> np.ndarray:
+    """The width_frac-wide circular run of bins whose mean `score` differs most from the rest."""
+    w = max(1, min(n_bins - 1, int(round(width_frac * n_bins))))
+    ext = np.concatenate([score, score[:w - 1]]) if w > 1 else score
+    csum = np.concatenate([[0.0], np.cumsum(ext)])
+    win_sum = csum[w:w + n_bins] - csum[:n_bins]
+    rest_mean = (score.sum() - win_sum) / max(n_bins - w, 1)
+    best = int(np.argmax(np.abs(win_sum / w - rest_mean)))
+    out = np.zeros(n_bins, bool)
+    out[(best + np.arange(w)) % n_bins] = True
+    return out
+
+
+def measure_contrast(rgb: np.ndarray, mask: np.ndarray, direction: str, period_cm: float,
+                     px_per_cm: float) -> tuple[np.ndarray, float] | None:
+    """Folded albedo colour profile over one period's phase, along the repeat's own normal."""
+    if direction == "bias" or px_per_cm <= 0:
+        return None
+    profiles = color_profiles(rgb, mask, direction)
+    if len(profiles) < FFT_MIN_PROFILES:
+        return None
+    period_px = period_cm * px_per_cm
+    if period_px < MIN_PERIOD_PX:
+        return None
+    return fold_profile(profiles, period_px)
 
 
 def runs_of(row: np.ndarray) -> np.ndarray:
@@ -652,6 +759,52 @@ def flatten_shading(img: np.ndarray, valid: np.ndarray, size: int) -> np.ndarray
     return img - low + np.median(low[valid], axis=0)
 
 
+def inward_shift(poly_px: np.ndarray, mask: np.ndarray, dist_px: float) -> np.ndarray:
+    """This seam polyline moved `dist_px` into the garment, away from the cutout edge's own blur/shading."""
+    tangent = poly_px[-1] - poly_px[0]
+    tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-6)
+    n = np.array([-tangent[1], tangent[0]])
+    mid = poly_px[len(poly_px) // 2]
+    h, w = mask.shape
+
+    def covered(pt: np.ndarray) -> bool:
+        x, y = int(round(pt[0])), int(round(pt[1]))
+        return 0 <= y < h and 0 <= x < w and bool(mask[y, x])
+
+    hits = [covered(mid + n * dist_px * k) for k in (1, 2, 3)]
+    if sum(hits) < sum(covered(mid - n * dist_px * k) for k in (1, 2, 3)):
+        n = -n
+    return poly_px + n * dist_px
+
+
+def seam_band_source(poly_px: np.ndarray, photo_img: np.ndarray, valid_mask: np.ndarray,
+                     half_width_px: float, out_scale: float) -> tuple[np.ndarray, np.ndarray] | None:
+    """A crop of the photo hugging one seam polyline, to seed a back panel's quilt from the front's own edge."""
+    x0 = max(int(poly_px[:, 0].min() - half_width_px), 0)
+    x1 = min(int(math.ceil(poly_px[:, 0].max() + half_width_px)) + 1, photo_img.shape[1])
+    y0 = max(int(poly_px[:, 1].min() - half_width_px), 0)
+    y1 = min(int(math.ceil(poly_px[:, 1].max() + half_width_px)) + 1, photo_img.shape[0])
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
+    band_img = Image.new("L", (x1 - x0, y1 - y0), 0)
+    local = [(px - x0, py - y0) for px, py in poly_px]
+    ImageDraw.Draw(band_img).line(local, fill=255, width=max(int(2 * half_width_px), 1))
+    band = np.asarray(band_img) > 127
+    crop_valid = valid_mask[y0:y1, x0:x1] & band
+    if crop_valid.sum() < PATCH * PATCH * 0.5:
+        return None
+    crop = photo_img[y0:y1, x0:x1].astype(np.float32)
+    flat = flatten_shading(crop, crop_valid, max(4, int(half_width_px)))
+    sh = (max(int(flat.shape[0] * out_scale), PATCH + 4), max(int(flat.shape[1] * out_scale), PATCH + 4))
+    big = np.asarray(Image.fromarray(np.clip(flat, 0, 255).astype(np.uint8)).resize(
+        (sh[1], sh[0]), Image.Resampling.LANCZOS), np.float32)
+    vm = np.asarray(Image.fromarray((crop_valid * 255).astype(np.uint8)).resize(
+        (sh[1], sh[0]), Image.Resampling.NEAREST)) > 200
+    if vm.sum() < PATCH * PATCH * 0.5:
+        return None
+    return big, vm
+
+
 def quilt(src: np.ndarray, valid: np.ndarray, shape: tuple[int, int], rng: np.random.Generator,
           fill: np.ndarray) -> np.ndarray:
     """Image quilting with feathered min-error-pick overlaps, drawn from the valid part of the photo."""
@@ -748,9 +901,71 @@ def circ_spread(d: np.ndarray, period: float) -> float:
     return float(np.sqrt(max(-2 * np.log(max(abs(z), 1e-9)), 0.0)) * period / (2 * np.pi))
 
 
+def tree_propagate(data: dict, tree: list[dict], normals: dict, period: float, root: str) -> dict:
+    """Initial per-panel offset by walking the spanning tree once from the root: exact on tree edges alone."""
+    off = {name: 0.0 for name in data["panels"]}
+    done = {root}
+    for st in tree:
+        known, new = (st["a"], st["b"]) if st["a"]["panel"] in done else (st["b"], st["a"])
+        done.add(new["panel"])
+        length = data["panels"][known["panel"]]["edges"][known["edge"]]["length_cm"]
+        n = max(int(length / SEAM_STEP_CM) + 1, 3)
+        ua = seam_u(data, known, normals, False, n)
+        ub = seam_u(data, new, normals, st["reversed"], n)
+        off[new["panel"]] = off[known["panel"]] - circ_mean(ua - ub, period)
+    return off
+
+
+def edge_raw_diff(data: dict, st: dict, normals: dict, period: float) -> float:
+    """Wrapped estimate of off[a] - off[b] from one stitched edge, ignoring any current offsets."""
+    length = data["panels"][st["a"]["panel"]]["edges"][st["a"]["edge"]]["length_cm"]
+    n = max(int(length / SEAM_STEP_CM) + 1, 3)
+    ua = seam_u(data, st["a"], normals, False, n)
+    ub = seam_u(data, st["b"], normals, st["reversed"], n)
+    return circ_mean(ua - ub, period)
+
+
+def lsq_offsets(data: dict, edges: list[dict], normals: dict, period: float, seen: set[str],
+                root: str, off_init: dict) -> tuple[dict, bool]:
+    """One offset per panel in `seen`, weighted least squares over every usable edge, root pinned at 0.
+
+    Each edge's wrapped phase difference is unwrapped to the period multiple nearest `off_init`,
+    then solved as a weighted linear system (weight = edge length); not rank-deficient whenever
+    `edges` spans `seen` (true here since `edges` always contains a spanning tree of it)."""
+    cols = {name: k for k, name in enumerate(n for n in seen if n != root)}
+    if not cols:
+        return dict(off_init), True
+    rows, rhs = [], []
+    for st in edges:
+        a, b = st["a"]["panel"], st["b"]["panel"]
+        length = data["panels"][a]["edges"][st["a"]["edge"]]["length_cm"]
+        raw = edge_raw_diff(data, st, normals, period)
+        k = round((off_init[a] - off_init[b] - raw) / period)
+        row = np.zeros(len(cols))
+        if a in cols:
+            row[cols[a]] += 1.0
+        if b in cols:
+            row[cols[b]] -= 1.0
+        w = math.sqrt(max(length, 1e-6))
+        rows.append(row * w)
+        rhs.append((raw + k * period) * w)
+    A = np.array(rows)
+    sol, _, rank, _ = np.linalg.lstsq(A, np.array(rhs), rcond=None)
+    if rank < len(cols):
+        return dict(off_init), False
+    off = dict(off_init)
+    off[root] = 0.0
+    for name, k in cols.items():
+        off[name] = float(sol[k])
+    return off, True
+
+
 def phase_offsets(data: dict, repeats: list, root: str) -> tuple[list[dict], dict]:
-    """One offset per stripe set per panel so the pattern lines up across every seam of the tree."""
+    """One offset per stripe set per panel: a weighted least-squares fit over every usable seam at once,
+    so the pattern lines up as well as the garment's own geometry allows, not just along one spanning tree."""
     tree, rest = spanning_tree(data, root)
+    edges = tree + rest
+    seen = {root} | {p for st in tree for p in (st["a"]["panel"], st["b"]["panel"])}
     out, info = [], {"root": root, "tree": [f"{s['a']['panel']}|{s['b']['panel']}|{s['label']}" for s in tree],
                      "sets": []}
     for rep in repeats:
@@ -762,35 +977,50 @@ def phase_offsets(data: dict, repeats: list, root: str) -> tuple[list[dict], dic
             normals[name] = (nrm, lay / max(float(np.linalg.norm(lay)), 1e-9))
         ref = normals[root][1]
         normals = {k: (-v[0] if float(v[1] @ ref) < 0 else v[0]) for k, v in normals.items()}
-        off = {name: 0.0 for name in data["panels"]}
         period = rep.period_cm
-        done = {root}
-        for st in tree:
-            known, new = (st["a"], st["b"]) if st["a"]["panel"] in done else (st["b"], st["a"])
-            done.add(new["panel"])
-            length = data["panels"][known["panel"]]["edges"][known["edge"]]["length_cm"]
-            n = max(int(length / SEAM_STEP_CM) + 1, 3)
-            ua = seam_u(data, known, normals, False, n)
-            ub = seam_u(data, new, normals, st["reversed"], n)
-            off[new["panel"]] = off[known["panel"]] - circ_mean(ua - ub, period)
-        worst_tree, worst_rest, spread, where = 0.0, 0.0, 0.0, "-"
-        for st, store in [(s, True) for s in tree] + [(s, False) for s in rest]:
+
+        off = tree_propagate(data, tree, normals, period, root)
+        source, note = "lsq", None
+        for _ in range(2):
+            off, ok = lsq_offsets(data, edges, normals, period, seen, root, off)
+            if not ok:
+                off = tree_propagate(data, tree, normals, period, root)
+                source, note = "tree_fallback", "LSQ rank-deficient (disconnected group); used tree offsets"
+                break
+
+        scored, stubs, all_worst = [], [], 0.0
+        for st in edges:
             length = data["panels"][st["a"]["panel"]]["edges"][st["a"]["edge"]]["length_cm"]
             n = max(int(length / SEAM_STEP_CM) + 1, 3)
             d = (seam_u(data, st["a"], normals, False, n) - off[st["a"]["panel"]]) - \
                 (seam_u(data, st["b"], normals, st["reversed"], n) - off[st["b"]["panel"]])
             r = abs(circ_mean(d, period)) / period
-            if store:
-                worst_tree = max(worst_tree, r)
-                sp = circ_spread(d, period) / period
-                if sp > spread:
-                    spread, where = sp, st["label"]
-            else:
-                worst_rest = max(worst_rest, r)
+            sp = circ_spread(d, period) / period
+            all_worst = max(all_worst, r)
+            # a sub-cm seam stays a constraint but shows no cloth, so it must not define the worst
+            (scored if length >= PHASE_MIN_SEAM_CM else stubs).append((r, sp, length, st["label"]))
+        rows = scored or stubs
         out.append({"offsets": off, "normals": normals})
-        info["sets"].append({"period_cm": period, "direction": rep.direction.value,
-                             "tree_residual": round(worst_tree, 5), "tree_spread": round(spread, 4),
-                             "spread_at": where, "worst_free_residual": round(worst_rest, 4)})
+        if not rows:
+            info["sets"].append({"period_cm": period, "direction": rep.direction.value,
+                                 "offsets_source": source, "edges_scored": 0})
+            continue
+        res = np.array([q[0] for q in rows])
+        spr = np.array([q[1] for q in rows])
+        wts = np.array([q[2] for q in rows])
+        worst_sp = int(np.argmax(spr))
+        info["sets"].append({
+            "period_cm": period, "direction": rep.direction.value, "offsets_source": source,
+            "loop_residual_worst": round(float(res.max()), 4),
+            "loop_residual_mean": round(float(np.average(res, weights=wts)), 4),
+            "spread_worst": round(float(spr.max()), 4),
+            "spread_mean": round(float(np.average(spr, weights=wts)), 4),
+            "spread_at": rows[worst_sp][3],
+            "loop_residual_worst_all_edges": round(all_worst, 4),
+            "edges_scored": len(scored), "edges_stub": len(stubs),
+        })
+        if note:
+            info["sets"][-1]["note"] = note
     return out, info
 
 
@@ -843,6 +1073,16 @@ def scan_bands(s: np.ndarray, covs: list[np.ndarray], f: dict, poly: np.ndarray)
     return [round(float((c * mine).sum() * step), 3) for c in cut]
 
 
+def poly_point_distance(poly: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Min distance from each of `pts` to the polyline `poly`, both flat (x, y) arrays in the same units."""
+    d = np.full(len(pts), np.inf)
+    for (ax, ay), (bx, by) in zip(poly[:-1], poly[1:]):
+        ex, ey = bx - ax, by - ay
+        t = np.clip(((pts[:, 0] - ax) * ex + (pts[:, 1] - ay) * ey) / max(ex * ex + ey * ey, 1e-12), 0, 1)
+        d = np.minimum(d, np.hypot(pts[:, 0] - (ax + t * ex), pts[:, 1] - (ay + t * ey)))
+    return d
+
+
 def band_sign(p: dict, placement: str) -> float:
     if placement in ("center_front", "center_back"):
         return -1.0 if p["side"] == "right" else 1.0
@@ -870,7 +1110,7 @@ def render_panel(name: str, p: dict, ctx: dict) -> dict:
             nrm = phase["normals"][name]
             u = (pts @ nrm).reshape(f["h"], f["w"]) - phase["offsets"][name]
             half = 0.5 * (abs(nrm[0]) + abs(nrm[1])) / f["ppc"]
-            cols = [hex_rgb(c.hex) for c in rep.colors] or [ground]
+            cols = ctx["repeat_colors"][k] or [ground]
             if rep.period_cm < ctx["collapse"]:
                 a = np.full((f["h"], f["w"]), min(rep.line_width_cm / rep.period_cm, 1.0), np.float32)
                 c = np.broadcast_to(np.mean(cols, 0).astype(np.float32), (f["h"], f["w"], 3))
@@ -885,6 +1125,10 @@ def render_panel(name: str, p: dict, ctx: dict) -> dict:
                 c = c / np.maximum(a, 1e-6)[..., None]
                 a = np.clip(a, 0, 1)
             sets.append((a, c))
+            for sb in rep.sub_bands:
+                cv = wave_cover(u, half, rep.period_cm, sb.width_cm, rep.offset_cm + sb.offset_cm)
+                sets.append((cv, np.broadcast_to(hex_rgb(sb.color.hex).astype(np.float32),
+                                                 (f["h"], f["w"], 3))))
     if sets:
         keep = np.ones((f["h"], f["w"]), np.float32)
         acc = np.zeros((f["h"], f["w"], 3), np.float32)
@@ -899,23 +1143,30 @@ def render_panel(name: str, p: dict, ctx: dict) -> dict:
     if name in ctx["warps"]:
         lay = apply_affine(np.asarray(p["layout"]["affine"], float), pts)
         cut = ctx["warps"][name](lay)
-        if ctx["tint"] is not None:
+        tint_arr = ctx["tint"].get(name, ctx["tint_default"])
+        if tint_arr is not None:
             on = sample_rgb(ctx["alpha"][..., None].astype(np.float32), cut)
-            tint = 1 + (sample_rgb(ctx["tint"][..., None], cut) - 1) * (on > 0.5)
+            tint = 1 + (sample_rgb(tint_arr[..., None], cut) - 1) * (on > 0.5)
             rgb = rgb * tint.reshape(f["h"], f["w"], 1)
+    mirror = ctx["mirror_tint"].get(name)
+    if mirror is not None:
+        rgb = rgb * mirror(pts).reshape(f["h"], f["w"], 1)
 
     if ctx["fallback"] and not p["rib"]:
         mode = "fallback"
-        if "scaled" not in ctx:
-            src, valid = ctx["source"]
-            scale = f["ppc"] / ctx["photo_ppc"]
-            sh = (max(int(src.shape[0] * scale), PATCH + 4), max(int(src.shape[1] * scale), PATCH + 4))
-            big = np.asarray(Image.fromarray(src.astype(np.uint8)).resize(
-                (sh[1], sh[0]), Image.Resampling.LANCZOS), np.float32)
-            vm = np.asarray(Image.fromarray((valid * 255).astype(np.uint8)).resize(
-                (sh[1], sh[0]), Image.Resampling.NEAREST)) > 200
-            ctx["scaled"] = (flatten_shading(big, vm, 4 * PATCH), vm)
-        rgb = quilt(*ctx["scaled"], (f["h"], f["w"]), ctx["rng"], ground)
+        seed = ctx["back_seed"].get(name)
+        if seed is None:
+            if "scaled" not in ctx:
+                src, valid = ctx["source"]
+                scale = f["ppc"] / ctx["photo_ppc"]
+                sh = (max(int(src.shape[0] * scale), PATCH + 4), max(int(src.shape[1] * scale), PATCH + 4))
+                big = np.asarray(Image.fromarray(src.astype(np.uint8)).resize(
+                    (sh[1], sh[0]), Image.Resampling.LANCZOS), np.float32)
+                vm = np.asarray(Image.fromarray((valid * 255).astype(np.uint8)).resize(
+                    (sh[1], sh[0]), Image.Resampling.NEAREST)) > 200
+                ctx["scaled"] = (flatten_shading(big, vm, 4 * PATCH), vm)
+            seed = ctx["scaled"]
+        rgb = quilt(*seed, (f["h"], f["w"]), ctx["rng"], ground)
         if cut is not None:
             cover = sample_rgb(ctx["alpha"][..., None].astype(np.float32), cut).reshape(f["h"], f["w"])
             cover = np.clip(ndimage.gaussian_filter(np.where(cover > 0.5, 1.0, 0.0), 1.0), 0, 1)[..., None]
@@ -932,6 +1183,17 @@ def render_panel(name: str, p: dict, ctx: dict) -> dict:
 
     bands_report = {}
     for trim in ctx["trims"]:
+        if trim.kind == TrimKind.line:
+            if not trim.path or cut is None:
+                continue
+            hh, ww = ctx["albedo"].shape[:2]
+            path_px = np.array([[x * ww, y * hh] for x, y in trim.path], float)
+            dist_px = poly_point_distance(path_px, cut)
+            width_px = max((trim.widths_cm[0] if trim.widths_cm else 0.3) * ctx["photo_ppc"], 1.0)
+            cov = np.clip((width_px / 2 - dist_px) / 1.0 + 0.5, 0, 1).reshape(f["h"], f["w"], 1)
+            col = hex_rgb(trim.colors[0].hex).astype(np.float32) if trim.colors else ground
+            rgb = rgb * (1 - cov) + col * cov
+            continue
         if not trim.widths_cm or not trim.colors:
             continue
         label = dict(ctx["trim_targets"][id(trim)]).get(name)
@@ -1082,7 +1344,66 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
     photo = albedo[..., :3][tuple(near)].astype(np.float32)
     base = hex_rgb(spec.base_color.hex)
     ground, like, like_frac = calibrate(albedo, mask, base)
-    tint = tint_field(albedo, mask, like)
+    ys_m, xs_m = np.nonzero(mask)
+    tint_whole = tint_field(albedo, mask, like, tint_sigma(float(xs_m.max() - xs_m.min() + 1)))
+    fft_meta = meta.get("fft", [])
+    blended_colors, contrast_log = [], []
+    for k, rep in enumerate(spec.repeats):
+        cols = [hex_rgb(c.hex) for c in rep.colors]
+        line_px = rep.line_width_cm * photo_ppc
+        entry = {"set": k, "direction": rep.direction.value, "confident": False, "line_width_px": round(line_px, 2)}
+        fft_entry = next((r for r in fft_meta if r["set"] == k), None)
+        period_ok = fft_entry is not None and fft_entry.get("fft_period_cm") is not None \
+            and fft_entry.get("peak_ratio", 0) >= FFT_PEAK_RATIO
+        # sub-resolvable: period trusted but line too thin to read its colour directly, only bound it
+        sub_res = period_ok and 0 < line_px < LINE_PX_MIN
+        if not period_ok:
+            entry["reason"] = "no trusted FFT period for this set"
+        elif line_px < LINE_PX_MIN:
+            # under ~2 px the line is past what the photo resolves, so the fold reads its blur, not its colour
+            entry["reason"] = f"line {line_px:.2f}px below the {LINE_PX_MIN:.0f}px the photo can resolve"
+        measured = measure_contrast(photo, mask, rep.direction.value, rep.period_cm, photo_ppc) \
+            if cols and period_ok and (line_px >= LINE_PX_MIN or sub_res) else None
+        if measured is not None:
+            profile, conc = measured
+            n_bins = len(profile)
+            width = min(rep.line_width_cm / rep.period_cm, 1.0)
+            # the fold has no absolute phase anchor (each profile starts at its own mask edge), so the
+            # line is found as whichever band of bins stands out from the rest, not via spec offset_cm
+            luma = profile @ np.array([0.2126, 0.7152, 0.0722])
+            in_band = band_window(n_bins, width, luma)
+            ground_rgb = profile[~in_band].mean(0) if (~in_band).any() else profile.mean(0)
+            line_rgb = profile[in_band].mean(0) if in_band.any() else profile.mean(0)
+            implied = np.clip(base + (line_rgb - ground_rgb), 0, 255)
+            spec_de = float(np.linalg.norm(to_lab(cols[0]) - to_lab(base)))
+            measured_de = float(np.linalg.norm(to_lab(implied) - to_lab(base)))
+            entry.update({
+                "fold_concentration": round(conc, 3),
+                "spec_contrast_de": round(spec_de, 2),
+                "measured_contrast_de": round(measured_de, 2),
+            })
+            if sub_res:
+                # phase scatter only dilutes the bound further (never inflates it), so unlike blend it doesn't gate the cap
+                bound_de = float(np.clip(measured_de * (LINE_PX_MIN / max(line_px, 1e-6)) * CAP_SAFETY,
+                                          CAP_FLOOR_DE, spec_de))
+                entry.update({"kind": "cap", "bound_contrast_de": round(bound_de, 2)})
+                if bound_de < spec_de:
+                    alpha = float(np.clip(bound_de / max(spec_de, 1e-6), 0.0, 1.0))
+                    cols = [np.clip(base + alpha * (c - base), 0, 255) for c in cols]
+                    entry["confident"] = True
+                else:
+                    entry["reason"] = "measured amplitude already within spec contrast"
+            elif conc >= FOLD_MIN_CONC:
+                entry["kind"] = "blend"
+                entry["confident"] = True
+                cols = [np.clip(0.5 * c + 0.5 * implied, 0, 255) for c in cols]
+            else:
+                entry["reason"] = (f"profiles disagreed on phase (concentration {conc:.2f} < "
+                                   f"{FOLD_MIN_CONC}); the fold cancels the band, so spec colours kept")
+        elif period_ok and (line_px >= LINE_PX_MIN or sub_res) and cols:
+            entry["reason"] = "too few full-period profiles across the garment to fold"
+        contrast_log.append(entry)
+        blended_colors.append(cols)
     marks, mark_notes, box = detect_marks(mask, data["garment"])
     lay_marks = dict(data["landmarks"]["front"])
     upper = data["garment"] == "upper"
@@ -1110,6 +1431,8 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
     # placement region -> the panel kind and wearer's side it lands on; a print never reaches the back
     region = {"front": ("front", None), "other": ("front", None),
               "left_leg": ("front", "left"), "right_leg": ("front", "right"),
+              "left_leg_front": ("front", "left"), "right_leg_front": ("front", "right"),
+              "left_leg_back": (None, None), "right_leg_back": (None, None),
               "left_sleeve": ("sleeve", "left"), "right_sleeve": ("sleeve", "right"),
               "hood": ("hood", None), "back": (None, None)}
     placements = []
@@ -1147,11 +1470,83 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
                 continue
             warps[n] = lambda p, f=arm: apply_lin(f, p)
 
+    # the seam along the body's outside: side_seam for a top, outseam for a pair of legs
+    seam_label = "side_seam" if upper else "outseam"
+    front_fam = {n for n, p in data["panels"].items() if p["kind"] == "front" and p["layout"]["view"] == "front"}
+    back_fam = {n for n, p in data["panels"].items() if p["kind"] == "back" and p["layout"]["view"] == "back"}
+    seam_match: dict[str, tuple[str, int, int, bool]] = {}
+    for st in data["stitches"]:
+        if st["label"] != seam_label:
+            continue
+        a, b = st["a"]["panel"], st["b"]["panel"]
+        if a in back_fam and b in front_fam and a not in seam_match:
+            seam_match[a] = (b, st["b"]["edge"], st["a"]["edge"], st["reversed"])
+        elif b in back_fam and a in front_fam and b not in seam_match:
+            seam_match[b] = (a, st["a"]["edge"], st["b"]["edge"], st["reversed"])
+    seam_notes = [f"{n}: no {seam_label} stitch to a front panel, tint/quilt fall back to the whole garment"
+                  for n in sorted(back_fam - seam_match.keys())]
+
+    tint_cache: dict[float, np.ndarray] = {}
+
+    def panel_tint(w) -> np.ndarray:
+        poly_local = np.asarray(p["outline_cm"], float)
+        lay_pts = apply_affine(np.asarray(p["layout"]["affine"], float), poly_local)
+        px = w(lay_pts)
+        width_px = float(max(px[:, 0].max() - px[:, 0].min(), px[:, 1].max() - px[:, 1].min(), 1.0))
+        key = round(tint_sigma(width_px), 1)
+        if key not in tint_cache:
+            tint_cache[key] = tint_field(albedo, mask, like, key)
+        return tint_cache[key]
+
+    tint_by_panel: dict[str, np.ndarray] = {}
+    if warp_mode == "tps":
+        for name, wfn in warps.items():
+            p = data["panels"][name]
+            tint_by_panel[name] = panel_tint(wfn)
+
+    mirror_tint: dict[str, object] = {}
+    for bname, (fname, f_edge, b_edge, rev) in seam_match.items():
+        if fname not in tint_by_panel:
+            continue
+        poly_b = np.asarray(data["panels"][bname]["edges"][b_edge]["polyline_cm"], float)
+        poly_f = np.asarray(data["panels"][fname]["edges"][f_edge]["polyline_cm"], float)
+        aff_f = np.asarray(data["panels"][fname]["layout"]["affine"], float)
+        warp_f, tint_f = warps[fname], tint_by_panel[fname]
+
+        def mirror(pts_local, poly_b=poly_b, poly_f=poly_f, aff_f=aff_f, warp_f=warp_f, tint_f=tint_f, rev=rev):
+            t = nearest_arc_frac(poly_b, pts_local)
+            px_f = warp_f(apply_affine(aff_f, along(poly_f, 1 - t if rev else t)))
+            on = sample_rgb(mask[..., None].astype(np.float32), px_f)[:, 0]
+            tv = sample_rgb(tint_f[..., None], px_f)[:, 0]
+            return np.where(on > 0.5, tv, 1.0).astype(np.float32)
+
+        mirror_tint[bname] = mirror
+
+    back_seed: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    if fallback:
+        out_scale = ppc / max(photo_ppc, 1e-6)
+        half_width_px = (PATCH + 8) / max(out_scale, 1e-6)
+        for bname, (fname, f_edge, b_edge, rev) in seam_match.items():
+            if fname not in warps:
+                continue
+            poly_local = np.asarray(data["panels"][fname]["edges"][f_edge]["polyline_cm"], float)
+            aff_f = np.asarray(data["panels"][fname]["layout"]["affine"], float)
+            poly_px = warps[fname](apply_affine(aff_f, poly_local))
+            # the cutout edge itself is blurred/shaded by the silhouette cut; sample just inside it instead
+            poly_in = inward_shift(poly_px, mask, half_width_px)
+            seed = seam_band_source(poly_in, photo, source_valid, half_width_px, out_scale)
+            if seed is not None:
+                back_seed[bname] = seed
+            else:
+                seam_notes.append(f"{bname}: {seam_label} band too thin for a quilt seed, using whole-garment pool")
+
     targets = {id(t): trim_targets(data, t, data["garment"]) for t in spec.trims}
     ctx = {"ppc": ppc, "collapse": collapse_period_cm, "ground": ground, "rib_color": rib_color,
-           "repeats": spec.repeats, "phase": phase, "trims": spec.trims, "trim_targets": targets,
+           "repeats": spec.repeats, "repeat_colors": blended_colors, "phase": phase,
+           "trims": spec.trims, "trim_targets": targets,
            "placements": placements, "warps": warps, "albedo": photo,
-           "tint": tint if warp_mode == "tps" else None,
+           "tint": tint_by_panel, "tint_default": tint_whole if warp_mode == "tps" else None,
+           "mirror_tint": mirror_tint, "back_seed": back_seed,
            "alpha": mask, "fallback": fallback, "photo_ppc": photo_ppc,
            "source": (photo, source_valid),
            "quilt_cache": {}, "rng": np.random.default_rng(SEED)}
@@ -1191,7 +1586,10 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
             "ground": [int(round(v)) for v in ground], "ground_from_photo": like_frac >= GROUND_FRAC,
             "ground_like_frac": round(like_frac, 3), "min_period_cm": min(live) if live else None,
             "collapsed": [i for i, r in enumerate(spec.repeats) if r.period_cm < collapse_period_cm],
-            "phase": phase_info, "landmarks": {"mode": warp_mode, "pairs": len(used), "used": used,
+            "phase": phase_info, "contrast": contrast_log,
+            "seam_tint": {"seam_label": seam_label, "mirrored": sorted(mirror_tint),
+                          "quilt_seeded": sorted(back_seed), "notes": seam_notes},
+            "landmarks": {"mode": warp_mode, "pairs": len(used), "used": used,
                                                "rms_cm": round(rms, 2),
                                                "found": {k: [round(v, 1) for v in pt] for k, pt in marks.items()},
                                                "notes": mark_notes},
@@ -1280,10 +1678,15 @@ def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple
                          for p in rg["probes"]]
 
     for k, s in enumerate(info["phase"]["sets"]):
-        if s["tree_residual"] > 0.02:
-            bad.append(f"set {k}: tree residual {s['tree_residual']:.3f}")
-    stats["phase"] = [(s["tree_residual"], s["tree_spread"], s["spread_at"], s["worst_free_residual"])
-                      for s in info["phase"]["sets"]]
+        if not s.get("edges_scored"):
+            continue
+        # spread is pure seam geometry (no offset fixes a seam that isn't square to the stripe); only a
+        # loop residual this large, or a non-finite value, means the LSQ itself broke rather than the cloth
+        if not math.isfinite(s["spread_worst"]) or not math.isfinite(s["loop_residual_worst"]) \
+                or s["loop_residual_worst"] > 0.5:
+            bad.append(f"set {k}: spread {s['spread_worst']:.3f} / loop residual {s['loop_residual_worst']:.3f}")
+    stats["phase"] = [(s.get("loop_residual_worst", 0.0), s.get("spread_worst", 0.0), s["offsets_source"],
+                       s.get("loop_residual_mean", 0.0)) for s in info["phase"]["sets"]]
 
     trims = []
     for trim in spec.trims:
@@ -1359,8 +1762,8 @@ def main() -> None:
         spec = override or PatternSpec.model_validate_json((item_dir / "spec.json").read_text())
         bad, stats = verify_item(data, spec, res, override is not None)
         info = res["meta"]
-        ph = "-" if not stats["phase"] else " ".join(f"{t:.3f}/{sp:.2f}@{at}/{f:.2f}"
-                                                     for t, sp, at, f in stats["phase"])
+        ph = "-" if not stats["phase"] else " ".join(f"loop{t:.3f}/spread{sp:.2f}/{src}/mean{f:.3f}"
+                                                     for t, sp, src, f in stats["phase"])
         tr = " ".join(f"{k}{v}" for k, v in stats["trims"][:2]) or "-"
         ln = " ".join(f"s{k}:{v.get('angle_err_deg', '-')}deg/{v.get('spacing_cm', '-')}cm/"
                       f"{v['lines_top']}in{v['cm_top']}cm>{v['lines_bottom']}in{v['cm_bottom']}cm"
