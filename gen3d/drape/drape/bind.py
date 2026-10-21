@@ -6,6 +6,7 @@ bootstrap()
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,7 @@ from app.mannequin.generator import body_mesh, vertex_normals
 from app.mannequin.params import SLIDERS
 
 from drape._repo import DRAPE
+from drape.body import arm_pose
 
 M = 100.0
 GARMENT_MATERIAL = {
@@ -26,6 +28,7 @@ GARMENT_MATERIAL = {
     "pbrMetallicRoughness": {"baseColorFactor": [0.82, 0.80, 0.78, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.8},
 }
 OBJ_ORDER = ("sim/**/*_sim.obj", "**/*_sim.obj", "sim/**/*_boxmesh.obj", "**/*_boxmesh.obj")
+ARM_TAG = re.compile(r"_a(\d+)(?=_|$)")
 
 
 def _kv(arg: str | None) -> dict[str, float]:
@@ -44,6 +47,12 @@ def _unit(v: np.ndarray) -> np.ndarray:
     return v / np.maximum(np.linalg.norm(v, axis=-1, keepdims=True), 1e-12)
 
 
+def obj_pose(obj: Path) -> float:
+    """The arm pose the sim ran in, from the body tag drape.py puts in the spec name."""
+    m = ARM_TAG.search(obj.stem)
+    return float(m.group(1)) if m else 0.0
+
+
 def garment_obj(out: Path, safe: str) -> Path | None:
     for pattern in OBJ_ORDER:
         hits = sorted((out / safe).glob(pattern))
@@ -56,6 +65,25 @@ def load_garment(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]
     mesh = trimesh.load(path, process=False)
     uv = getattr(mesh.visual, "uv", None)
     return np.asarray(mesh.vertices, float) / M, np.asarray(mesh.faces, np.int64), None if uv is None else np.asarray(uv, float)
+
+
+def write_posed_obj(src: Path, verts: np.ndarray, moved: np.ndarray, dst: Path) -> Path:
+    """The sim obj with its v lines moved; trimesh splits verts on uv seams, so match them by position."""
+    lines, pts = src.read_text().splitlines(), []
+    for ln in lines:
+        if ln.startswith("v "):
+            pts.append([float(x) for x in ln.split()[1:4]])
+    idx = cKDTree(verts * M).query(np.asarray(pts, float))[1]
+    out, i = [], 0
+    for ln in lines:
+        if ln.startswith("v "):
+            x, y, z = moved[idx[i]] * M
+            out.append(f"v {x:.6f} {y:.6f} {z:.6f}")
+            i += 1
+        else:
+            out.append(ln)
+    dst.write_text("\n".join(out) + "\n")
+    return dst
 
 
 def nearest_surface(verts: np.ndarray, faces: np.ndarray, pts: np.ndarray, k: int = 256) -> tuple[np.ndarray, np.ndarray]:
@@ -91,6 +119,17 @@ def _frame(verts: np.ndarray, faces: np.ndarray, tri: np.ndarray, bary: np.ndarr
     edge = corner_v[:, 1] - corner_v[:, 0]
     t1 = _unit(edge - (edge * n).sum(1, keepdims=True) * n)
     return pts, t1, np.cross(n, t1), n
+
+
+def push_out(verts: np.ndarray, faces: np.ndarray, pts: np.ndarray, margin: float = 0.002) -> tuple[np.ndarray, int]:
+    """Lift points that ended up inside the body onto its surface: re-posing closes the armpit on them."""
+    close, tri = nearest_surface(verts, faces, pts)
+    bary = trimesh.triangles.points_to_barycentric(verts[faces[tri]], close)
+    normal = _frame(verts, faces, tri, bary)[3]
+    inside = ((pts - close) * normal).sum(1) < 0
+    out = pts.copy()
+    out[inside] = close[inside] + margin * normal[inside]
+    return out, int(inside.sum())
 
 
 def signed_distance(verts: np.ndarray, faces: np.ndarray, pts: np.ndarray) -> np.ndarray:
@@ -174,13 +213,19 @@ def apply_texture(out: Path, safe: str, glb: Path) -> bool:
     return True
 
 
-def run(safe: str, inputs: Path, out: Path, base: str, sliders: dict, push: dict | None, compare: Path | None) -> dict:
+def run(safe: str, inputs: Path, out: Path, base: str, sliders: dict, push: dict | None, compare: Path | None,
+        pose: float | None = None) -> dict:
     obj = garment_obj(out, safe)
     if obj is None:
         print(f"SKIP {safe}: no garment obj under {out / safe}")
         return {}
     gverts, gfaces, uv = load_garment(obj)
-    body, bfaces = body_mesh(base, sliders)
+    pose = obj_pose(obj) if pose is None else pose
+    if pose:
+        with arm_pose(pose):
+            body, bfaces = body_mesh(base, sliders)
+    else:
+        body, bfaces = body_mesh(base, sliders)
     b = bind(gverts, body, bfaces)
 
     glb_dir = out / safe / "glb"
@@ -190,7 +235,7 @@ def run(safe: str, inputs: Path, out: Path, base: str, sliders: dict, push: dict
 
     recon = reconstruct(b, body, bfaces)
     report = {
-        "safe": safe, "obj": str(obj.relative_to(out)), "base": base,
+        "safe": safe, "obj": str(obj.relative_to(out)), "base": base, "arm_pose_deg": pose,
         "sliders": sliders, "n_verts": len(gverts), "n_faces": len(gfaces),
         "obj_v_lines": sum(1 for ln in obj.read_text().splitlines() if ln.startswith("v ")),
         "offset_cm": {"mean": round(float(np.abs(b["offset"]).mean() * M), 3), "max": round(float(np.abs(b["offset"]).max() * M), 3)},
@@ -198,11 +243,22 @@ def run(safe: str, inputs: Path, out: Path, base: str, sliders: dict, push: dict
         "a_reconstruction_normal_only": _dist(reconstruct(b, body, bfaces, frame=False), gverts),
     }
 
+    posed = None
+    if pose:
+        wverts, wfaces = body_mesh(base, sliders)
+        raw = reconstruct(b, wverts, wfaces)
+        posed, lifted = push_out(wverts, wfaces, raw)
+        dst = write_posed_obj(obj, gverts, posed, obj.parent / f"{obj.stem}_posed.obj")
+        report["posed"] = {"obj": str(dst.relative_to(out)), "displacement": _dist(posed, gverts),
+                           "penetration_before_push": _penetration(wverts, wfaces, raw), "lifted": lifted,
+                           "penetration": _penetration(wverts, wfaces, posed),
+                           "y_cm": [round(float(posed[:, 1].min() * M), 2), round(float(posed[:, 1].max() * M), 2)]}
+
     g0, targets = garment_morphs(b, base)
     normals, target_normals = morph_normals(g0, gfaces, targets)
     weights = [sliders[k] for k in SLIDERS]
-    report["identity"] = {"blend_vs_original": _dist(blend(g0, targets, weights), gverts),
-                          "blend_vs_reconstruction": _dist(blend(g0, targets, weights), recon)}
+    report["identity"] = {"blend_vs_original": _dist(blend(g0, targets, weights), gverts if posed is None else posed),
+                          "blend_vs_reconstruction": _dist(blend(g0, targets, weights), recon if posed is None else posed)}
 
     glb = glb_dir / f"{safe}_bound.glb"
     # glTF samples textures from the top, OBJ from the bottom
@@ -235,6 +291,11 @@ def show(r: dict) -> None:
           f"(normal-offset only: mean {na['mean_cm']:.3f} / max {na['max_cm']:.3f} cm)")
     i = r["identity"]["blend_vs_original"]
     print(f"      identity  mean {i['mean_cm']:6.3f} cm  max {i['max_cm']:6.3f} cm  (morph blend vs original)")
+    if "posed" in r:
+        p = r["posed"]
+        print(f"      posed     arms {r['arm_pose_deg']:g} -> web pose, moved mean {p['displacement']['mean_cm']:6.2f} cm, "
+              f"penetration {p['penetration_before_push']['count']} ({p['penetration_before_push']['pct']}%) lifted onto the body "
+              f"-> {p['penetration']['count']} ({p['penetration']['pct']}%), y {p['y_cm'][0]}-{p['y_cm'][1]} cm -> {p['obj']}")
     if "b_push" in r:
         p = r["b_push"]
         print(f"  (b) push      mean {p['displacement']['mean_cm']:6.3f} cm  max {p['displacement']['max_cm']:6.3f} cm  "
@@ -258,6 +319,7 @@ def main() -> None:
     ap.add_argument("--sliders", default=None, help="key=val,... the body the garment was draped on (defaults 0.5)")
     ap.add_argument("--push", default=None, help="key=val,... body to stress the binding against")
     ap.add_argument("--compare", type=Path, default=None, help="re-draped obj for the pushed body")
+    ap.add_argument("--arm-pose", type=float, default=None, help="arms deg from vertical the sim ran in (default: from the obj name)")
     args = ap.parse_args()
 
     sliders = {**dict.fromkeys(SLIDERS, 0.5), **_kv(args.sliders)}
@@ -266,7 +328,7 @@ def main() -> None:
     for d in sorted(args.inputs.iterdir()):
         if not (d / "item.json").exists() or (args.only and d.name != args.only):
             continue
-        r = run(d.name, args.inputs, args.out, args.base, sliders, push, args.compare)
+        r = run(d.name, args.inputs, args.out, args.base, sliders, push, args.compare, pose=args.arm_pose)
         if r:
             show(r)
             reports.append(r)

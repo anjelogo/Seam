@@ -10,6 +10,36 @@ from drape._repo import bootstrap, GC, DRAPE
 bootstrap()
 
 TOP_SLOTS = {"top", "outer", "onepiece"}
+# stress bottoms: narrow leg + taper, by manifest role
+STRESS = {
+    "legging": {"pants.width": 1.0, "pants.flare": 0.5},
+    "pinstripe": {"pants.width": 1.05, "pants.flare": 0.65},
+}
+
+
+def slot_kind(tags: dict) -> str:
+    """top or bottom. The category wins: taggers put joggers in slot 'outer'."""
+    from drape.params import CATEGORY_SLOT
+
+    cat = (tags.get("category") or "").lower()
+    if cat in CATEGORY_SLOT:
+        return "top" if CATEGORY_SLOT[cat] == "upper" else "bottom"
+    return "top" if (tags.get("slot") or "top").lower() in TOP_SLOTS else "bottom"
+
+
+def apply_stress(design: dict, role: str | None) -> str:
+    """Narrow-leg overrides for the stress bottoms; returns the pattern-name suffix."""
+    over = STRESS.get((role or "").lower())
+    if not over:
+        return ""
+    for path, val in over.items():
+        node = design
+        *parents, last = path.split(".")
+        for key in parents:
+            node = node[key]
+        node[last]["v"] = val
+    print(f"stress {role}: " + ", ".join(f"{k}={v}" for k, v in over.items()))
+    return "_stress"
 
 
 def load_items(inputs: Path, only: str | None) -> list[dict]:
@@ -24,22 +54,22 @@ def load_items(inputs: Path, only: str | None) -> list[dict]:
     return items
 
 
-def body_tag_for(item: dict, size: str | None, bodies: Path, wearer: str) -> str:
+def body_tag_for(item: dict, size: str | None, bodies: Path, wearer: str, pose: str = "") -> str:
     tags = item.get("tags") or {}
-    slot = tags.get("slot") or "top"
     size = size or tags.get("size_normalized")
+    suffix = f"_{pose}" if pose else ""
     if not size:
-        return wearer
-    slot_kind = "top" if slot in TOP_SLOTS else "bottom"
-    name = f"size_{slot_kind}_{size}"
+        return wearer + suffix
+    kind = slot_kind(tags)
+    name = f"size_{kind}_{size}{suffix}"
     if not (bodies / f"{name}.yaml").exists():
         try:
             from drape.size_body import build as build_size_body
 
-            build_size_body(wearer=wearer, slot=slot_kind, size=size, name=name)
+            build_size_body(wearer=wearer + suffix, slot=kind, size=size, name=name)
         except Exception as e:
             print(f"size body {name} unavailable ({e}); falling back to wearer body")
-            return wearer
+            return wearer + suffix
     return name
 
 
@@ -73,6 +103,8 @@ def main() -> None:
     items = load_items(args.inputs, args.only)
     if not items:
         sys.exit(f"no items with item.json under {args.inputs}")
+    mf = args.inputs / "manifest.json"
+    roles = {i["safe"]: i.get("role") for i in json.loads(mf.read_text()).get("items", [])} if mf.exists() else {}
     results = []
     for entry in items:
         safe, d, item = entry["safe"], entry["dir"], entry["item"]
@@ -83,12 +115,13 @@ def main() -> None:
         design = json.loads(params_path.read_text())
         if "design" in design:
             design = design["design"]
+        stress = apply_stress(design, roles.get(safe))
         body_tag = body_tag_for(item, args.size, args.bodies, args.wearer)
         body_yaml = args.bodies / f"{body_tag}.yaml"
         if not body_yaml.exists():
             print(f"{safe}: body yaml {body_yaml} missing, skipping")
             continue
-        name = f"{safe}__{body_tag}"
+        name = f"{safe}__{body_tag}{stress}"
         t0 = time.time()
         folder = build_pattern(safe, design, body_yaml, args.out / safe / "pattern", name)
         secs = round(time.time() - t0, 2)

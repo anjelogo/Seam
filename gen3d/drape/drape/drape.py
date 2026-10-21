@@ -24,6 +24,11 @@ from pygarment.meshgen import boxmeshgen as boxmeshgen_mod
 if not hasattr(boxmeshgen_mod.Edge, "name"):
     boxmeshgen_mod.Edge.name = "edge"
 
+A_POSE_DEG = 45.0
+# tops sim in GarmentCode's A-pose (drape.bind puts them back on the web pose); bottoms keep their waist
+POSE = {"top": A_POSE_DEG, "bottom": 0.0}
+HOLD = {"top": True, "bottom": True}
+
 PRESET_FILES = {
     "soft_flexy": "soft_flexy_ochra 30s.json",
     "soft": "soft_ochra.json",
@@ -68,7 +73,7 @@ class VramSampler:
 
 
 def load_props(res: float | None, max_steps: int | None, attachment: bool, material: str | None,
-               frame_timeout: int | None):
+               frame_timeout: int | None, hold: bool = False, body_friction: float | None = None):
     props = data_config.Properties(str(GC / "assets/Sim_props/default_sim_props.yaml"))
     props.set_section_stats("sim", fails={}, sim_time={}, spf={}, fin_frame={}, body_collisions={}, self_collisions={})
     props.set_section_stats("render", render_time={})
@@ -79,6 +84,11 @@ def load_props(res: float | None, max_steps: int | None, attachment: bool, mater
         cfg["max_sim_steps"] = max_steps
     if not attachment:
         cfg["options"]["enable_attachment_constraint"] = False
+    if hold:
+        # upstream releases the attachments at frame 400 and the garment slides off our mannequin
+        cfg["options"]["attachment_frames"] = cfg["max_sim_steps"] + 1
+    if body_friction is not None:
+        cfg["options"]["body_friction"] = body_friction
     # upstream frame timeout no-ops on Darwin (platform name mismatch skips the frame entirely)
     cfg["max_frame_time"] = None if platform.system() == "Darwin" else frame_timeout or cfg.get("max_frame_time")
     preset = MATERIAL_PRESET.get((material or "").lower())
@@ -181,7 +191,23 @@ def save_timings(out: Path, timings: list):
     print(f"timings -> {path}")
 
 
-def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str | None, wearer: str) -> tuple[Path, str]:
+def posed_wearer(bodies: Path, wearer: str, base: str, sliders: dict | None, pose: float | None) -> tuple[str, str]:
+    """The body to sim on and the tag that keeps posed bodies and patterns apart from the web-pose ones."""
+    from drape import body as body_mod
+
+    if not pose:
+        return wearer, ""
+    tag = f"a{round(pose)}"
+    name = f"{wearer}_{tag}"
+    if not ((bodies / f"{name}.obj").exists() and (bodies / f"{name}.yaml").exists()):
+        body_mod.export_pose(base, sliders, wearer, pose, name)
+        print(f"posed body {name}: arms {pose:g} deg from vertical")
+    return name, tag
+
+
+def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str | None, wearer: str,
+                   pose: float | None = None, role: str | None = None, base: str = "masc",
+                   sliders: dict | None = None) -> tuple[Path, str, str]:
     from drape import pattern as pattern_mod
 
     items = pattern_mod.load_items(inputs, safe)
@@ -191,12 +217,14 @@ def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str |
     design = json.loads((entry["dir"] / "params.json").read_text())
     if "design" in design:
         design = design["design"]
-    body_tag = pattern_mod.body_tag_for(entry["item"], size, bodies, wearer)
-    name = f"{safe}__{body_tag}"
+    stress = pattern_mod.apply_stress(design, role)
+    sim_body, tag = posed_wearer(bodies, wearer, base, sliders, pose)
+    body_tag = pattern_mod.body_tag_for(entry["item"], size, bodies, wearer, pose=tag)
+    name = f"{safe}__{body_tag}{stress}"
     spec = out / safe / "pattern" / name / f"{name}_specification.json"
     if not spec.exists():
         pattern_mod.build_pattern(safe, design, bodies / f"{body_tag}.yaml", out / safe / "pattern", name)
-    return spec.parent, name
+    return spec.parent, name, sim_body
 
 
 def experiment_sizes(args, props_kw: dict, timings: list):
@@ -205,7 +233,7 @@ def experiment_sizes(args, props_kw: dict, timings: list):
     if not hoodie:
         raise SystemExit("no hoodie/sweatshirt item in inputs")
     for size in ("XS", "M", "XL"):
-        spec_dir, name = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], size, args.wearer)
+        spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], size, args.wearer)
         props = load_props(**props_kw, material=hoodie.get("material"))
         drape_one(spec_dir, name, args.wearer, args.out / hoodie["safe"] / f"sim_size_{size}", props, timings,
                   hoodie["safe"], boxmesh_only=args.boxmesh_only)
@@ -217,7 +245,7 @@ def experiment_layers(args, props_kw: dict, timings: list):
     hoodie = find_by_role(items, "hoodie", "sweatshirt")
     if not (tee and hoodie):
         raise SystemExit("layer test needs a tee and a hoodie in inputs")
-    spec_dir, name = ensure_pattern(args.inputs, args.bodies, args.out, tee["safe"], None, args.wearer)
+    spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, tee["safe"], None, args.wearer)
     props = load_props(**props_kw, material=tee.get("material"))
     tee_obj = drape_one(spec_dir, name, args.wearer, args.out / tee["safe"] / "sim_layer_base", props, timings, tee["safe"])
     if not tee_obj.exists():
@@ -243,7 +271,7 @@ def experiment_layers(args, props_kw: dict, timings: list):
     seg["body"] = list(seg["body"]) + list(range(len(body.vertices), len(merged.vertices)))
     try:
         seg_path.write_text(json.dumps(seg))
-        spec_dir, name = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], None, args.wearer)
+        spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], None, args.wearer)
         props = load_props(**props_kw, material=hoodie.get("material"))
         drape_one(spec_dir, name, merged_name, args.out / hoodie["safe"] / "sim_layered", props, timings, hoodie["safe"])
     finally:
@@ -256,8 +284,12 @@ def main() -> None:
     ap.add_argument("--bodies", type=Path, default=DRAPE / "runs/bodies")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--wearer", default="wearer_masc")
+    ap.add_argument("--base", default="masc", choices=("masc", "fem"), help="mannequin base of --wearer, for posing it")
     ap.add_argument("--only")
     ap.add_argument("--size")
+    ap.add_argument("--arm-pose", type=float, default=None, help="arms deg from vertical (default: A-pose on tops)")
+    ap.add_argument("--hold", choices=("auto", "on", "off"), default="auto", help="hold attachments for the whole sim")
+    ap.add_argument("--body-friction", type=float, default=None, help="cloth-body friction (upstream default 0.5)")
     ap.add_argument("--res", type=float, default=None)
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--no-attachment", action="store_true")
@@ -270,7 +302,7 @@ def main() -> None:
     args = ap.parse_args()
 
     props_kw = dict(res=args.res, max_steps=args.max_steps, attachment=not args.no_attachment,
-                    frame_timeout=args.frame_timeout)
+                    frame_timeout=args.frame_timeout, body_friction=args.body_friction)
     timings: list = []
     args.out.mkdir(parents=True, exist_ok=True)
     try:
@@ -281,16 +313,25 @@ def main() -> None:
         elif args.spec:
             if not args.name:
                 raise SystemExit("--spec requires --name")
-            props = load_props(**props_kw, material=args.material)
+            props = load_props(**props_kw, material=args.material, hold=args.hold == "on")
             drape_one(args.spec, args.name, args.wearer, args.out, props, timings, args.name, boxmesh_only=args.boxmesh_only)
         else:
+            from drape import pattern as pattern_mod
+
             items = manifest_items(args.inputs)
             for it in items:
                 if args.only and it["safe"] != args.only:
                     continue
-                spec_dir, name = ensure_pattern(args.inputs, args.bodies, args.out, it["safe"], args.size, args.wearer)
-                props = load_props(**props_kw, material=it.get("material"))
-                drape_one(spec_dir, name, args.wearer, args.out / it["safe"] / "sim", props, timings, it["safe"],
+                kind = pattern_mod.slot_kind(it)
+                pose = POSE[kind] if args.arm_pose is None else args.arm_pose
+                hold = HOLD[kind] if args.hold == "auto" else args.hold == "on"
+                spec_dir, name, sim_body = ensure_pattern(args.inputs, args.bodies, args.out, it["safe"], args.size,
+                                                          args.wearer, pose=pose, role=it.get("role"), base=args.base)
+                props = load_props(**props_kw, material=it.get("material"), hold=hold)
+                cfg = props["sim"]["config"]
+                print(f"{it['safe']}: {kind}, body {sim_body}, attachments held to frame "
+                      f"{cfg['options']['attachment_frames']} of {cfg['max_sim_steps']}")
+                drape_one(spec_dir, name, sim_body, args.out / it["safe"] / "sim", props, timings, it["safe"],
                           boxmesh_only=args.boxmesh_only)
     finally:
         if timings:

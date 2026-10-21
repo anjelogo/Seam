@@ -6,10 +6,12 @@ bootstrap()
 
 import argparse
 import json
+from contextlib import contextmanager
 
 import numpy as np
 import trimesh
 import yaml
+from app.mannequin import generator
 from app.mannequin.generator import ARM, LAYOUT, TRUNK, body_mesh, leg_ring_at, split
 from app.mannequin.params import SLIDERS, STATIONS, body_params
 
@@ -18,6 +20,7 @@ from drape._repo import RUNS
 BODIES = RUNS / "bodies"
 SEG_FILE = "ggg_body_segmentation.json"
 M = 100.0
+A_POSE_DEG = 45.0  # arms from vertical, GarmentCode's A-pose; the web pose is params.ARM_ANGLE (20)
 
 # body faces +z and the generator's unmirrored side is +x, which is the body's own left
 SEG_PARTS = {
@@ -165,6 +168,34 @@ def export(base: str, sliders: dict | None, name: str) -> dict[str, float]:
     BODIES.mkdir(parents=True, exist_ok=True)
     trimesh.Trimesh(verts, faces, process=False).export(BODIES / f"{name}.obj")
     body = measure(base, sliders)
+    (BODIES / f"{name}.yaml").write_text(yaml.safe_dump({"body": body}, sort_keys=True))
+    (BODIES / SEG_FILE).write_text(json.dumps(segmentation()))
+    return body
+
+
+@contextmanager
+def arm_pose(deg: float):
+    """Re-pose the arms: generator.arm_dir reads ARM_ANGLE at call time."""
+    old = generator.ARM_ANGLE
+    generator.ARM_ANGLE = np.radians(deg)
+    try:
+        yield
+    finally:
+        generator.ARM_ANGLE = old
+
+
+def export_pose(base: str, sliders: dict | None, wearer: str, deg: float, name: str) -> dict:
+    """The wearer in a different arm pose: posed mesh, its own measurements bar the arm angle."""
+    with arm_pose(deg):
+        verts, faces = body_mesh(base, sliders)
+    BODIES.mkdir(parents=True, exist_ok=True)
+    trimesh.Trimesh(verts, faces, process=False).export(BODIES / f"{name}.obj")
+    body = yaml.safe_load((BODIES / f"{wearer}.yaml").read_text())["body"]
+    height = float(verts[:, 1].max() - verts[:, 1].min()) * M
+    if abs(height - body["height"]) > 0.5:
+        print(f"WARNING: {name} mesh is {height:.1f} cm but {wearer}.yaml says {body['height']:.1f} cm "
+              f"(pass the wearer's --base/--sliders)")
+    body["arm_pose_angle"] = round(90.0 - deg, 4)
     (BODIES / f"{name}.yaml").write_text(yaml.safe_dump({"body": body}, sort_keys=True))
     (BODIES / SEG_FILE).write_text(json.dumps(segmentation()))
     return body
