@@ -9,6 +9,13 @@ Format:
 
 ---
 
+## 2026-10-20 22:59 · anjelo · v3 garments + listing offers
+- contract v3 (shared/schema): Garment g_<ulid> (tags, pattern_spec, best_photo, asset) holds listings: ListingOffer source:source_id (price, shipping, seller, size/brand as typed, stated + assessed condition, status, photos); cards show one price = cheapest active price + shipping (best_listing_id); new GET /garments (filters as /items) and GET /garments/{id} (also takes a listing id); OutfitPiece.item_id, Asset3D.item_id and GenJob.item_id now hold garment ids
+- migration 002_garments: items renamed listings (+ garment_id, seller, brand_raw, stated/assessed_condition, stock_photo), new garments, photos (upright file, 64-bit pHash in 8 bands), garment_links_log, assets.garment_id; scrape saves photos upright, hashes them and links cross-posts (api/app/dedup.py) before deferring tag(garment_id); tagging runs once per garment (per-photo view/rotation/state/wrinkle, pattern_spec, fold check)
+- after deploying run `python -m seam_shared.migrate`, then once `cd api && uv run python -m app.backfill [--dry-run]` (idempotent: one garment per listing, photos upright + hashed, linking, assets rekeyed and keyed by garment_id); dev clone: 2837 listings -> 2821 garments, 16 merges, 2 stock_photo pairs, 61 vetoes
+- compat for one release: GET /items and /items/{id} return v2 Items built from each garment's best listing (Item.id = garment id), POST /outfits keeps the v2 shape and ?v=3 returns OutfitResponseV3; /gen3d/jobs/{listing id} now 404s (jobs are keyed by garment id)
+- action needed (caden): app/cv and app/worker/tasks.py work on garments now (db.get_garment, save_garment_tags); the repo .env FAL_KEY is rejected by fal (401), so condition() fails until it is fixed or unset
+
 ## 2026-10-20 21:05 · anjelo · gen3d drape poc
 - sewing-pattern + cloth-sim PoC lives in gen3d/drape (own uv package; nothing wired into prod): 4 real prod items -> Claude design params -> pygarment patterns on size bodies -> our mannequin exported as a GarmentCode body; panel texturing, morph-bound GLBs (web useBodyMorphs-compatible) and a side-by-side viewer all run locally
 - the warp cloth sim itself needs a CUDA box: drape/scripts/setup_gpu.sh + run_poc.sh are ready, local CPU sim segfaults (documented); numbers, screenshots, license flag (warp fork is non-commercial) and verdict in gen3d/drape/RESULTS.md
