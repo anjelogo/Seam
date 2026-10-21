@@ -514,13 +514,15 @@ def fit_warp(layout: dict, found: dict, prior: np.ndarray, diag: float, allow: t
         if len(idx) >= 3:
             lin = np.linalg.lstsq(np.concatenate([src[idx], np.ones((len(idx), 1))], 1), dst[idx],
                                   rcond=None)[0]
+        else:
+            lin, keep = prior, set()
     used = [k for k in keys if k in keep]
     idx = [i for i, k in enumerate(keys) if k in keep]
     cm = math.sqrt(max(abs(np.linalg.det(lin[:2])), 1e-9))
     rms = float(np.sqrt((np.linalg.norm(apply_lin(lin, src[idx]) - dst[idx], axis=1) ** 2).mean())) / cm \
         if idx else float("nan")
     if len(idx) < TPS_MIN:
-        return (lambda p: apply_lin(lin, p)), ("prior" if not idx else mode), used, rms, lin
+        return (lambda p: apply_lin(lin, p)), (mode if idx or mode == "upright" else "prior"), used, rms, lin
     s, d = src[idx], dst[idx]
     lo, hi = s.min(0), s.max(0)
     pad = 0.4 * np.maximum(hi - lo, 1.0)
