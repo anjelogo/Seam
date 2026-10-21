@@ -1,4 +1,5 @@
-import type { Fit, Item, Slot } from "@shared/types";
+import { bestListing } from "@shared/types";
+import type { Fit, Garment, Slot } from "@shared/types";
 import type { Profile } from "./viewmodel";
 
 export type GarmentFit = { ease: number; crop: number; sizeDelta: number | null };
@@ -33,12 +34,13 @@ function sizeDelta(slot: Slot, raw: string | null | undefined, profile: Profile)
   return LETTER_SLOTS.includes(slot) ? sizesApart(letterIndex(raw), letterIndex(profile.topSize), 1) : null;
 }
 
-export function garmentFit(item: Item, profile: Profile): GarmentFit {
-  const { listing, tags } = item;
+export function garmentFit(garment: Garment, profile: Profile): GarmentFit {
+  const { tags } = garment;
   if (!tags) return { ease: EASE.unknown, crop: 0, sizeDelta: null };
-  const baggy = [listing.title, ...tags.style_tags].some((text) => BAGGY.test(text));
+  const best = bestListing(garment);
+  const baggy = [best.title, ...tags.style_tags].some((text) => BAGGY.test(text));
   const ease = Math.max(EASE[tags.fit] ?? EASE.unknown, baggy ? 0.7 : 0);
-  const delta = sizeDelta(tags.slot, tags.size_normalized ?? listing.size_raw, profile);
+  const delta = sizeDelta(tags.slot, tags.size_normalized ?? best.size_raw, profile);
   const steps = delta ?? 0;
   return {
     ease: clamp01(ease + (steps > 0 ? 0.18 : 0.1) * steps),

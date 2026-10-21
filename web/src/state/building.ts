@@ -1,10 +1,10 @@
 import { useGLTF } from "@react-three/drei";
-import type { Asset3D, BodyBase, Item, Slot } from "@shared/types";
+import type { Asset3D, BodyBase, Garment, Slot } from "@shared/types";
 import { create } from "zustand";
-import { getItems } from "../lib/api";
+import { getGarments } from "../lib/api";
 import { deriveView, MAX_CARDS, STORE_SOURCES, toListing } from "../lib/lookJob";
 import type { BuildFailure, BuildLog, BuildView, LookJobEvent } from "../lib/lookJob";
-import { toUiItem } from "../lib/viewmodel";
+import { toUiGarment } from "../lib/viewmodel";
 import { applyOutfit, conversionPending, requestOutfits, useLook } from "./look";
 import { DEFAULT_PROFILE, useProfile } from "./profile";
 
@@ -59,9 +59,9 @@ const currentBase = (): BodyBase => useProfile.getState().profile?.base ?? DEFAU
 
 const notFound = (error: unknown) => (error as { status?: unknown } | null)?.status === 404;
 
-const rank = ({ tags }: Item) => (!tags ? 2 : tags.usable_for_3d && tags.clean_image ? 0 : 1);
+const rank = ({ tags }: Garment) => (!tags ? 2 : tags.usable_for_3d && tags.clean_image ? 0 : 1);
 
-const bestCards = (items: Item[]) => [...items].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_CARDS);
+const bestCards = (garments: Garment[]) => [...garments].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_CARDS);
 
 function later(ms: number, fn: () => void) {
   const timer = window.setTimeout(fn, ms);
@@ -98,19 +98,19 @@ function fail(failure: BuildFailure) {
 }
 
 async function listings(prompt: string) {
-  const res = await getItems({ q: prompt, limit: ITEMS_LIMIT });
-  return res.items.length ? res : getItems({ limit: ITEMS_LIMIT });
+  const res = await getGarments({ q: prompt, limit: ITEMS_LIMIT });
+  return res.garments.length ? res : getGarments({ limit: ITEMS_LIMIT });
 }
 
 // the event that settles a piece now, or null while it still converts
 function verdict(itemId: string): Settled | null {
   const { items, assets } = useLook.getState();
-  const item = items[itemId];
-  const asset = assets[itemId] ?? item?.asset;
-  const ui = item ? toUiItem(item, currentBase(), asset) : null;
+  const garment = items[itemId];
+  const asset = assets[itemId] ?? garment?.asset;
+  const ui = garment ? toUiGarment(garment, currentBase(), asset) : null;
   if (ui?.modelUrl) return { type: "model_ready", itemId, modelUrl: ui.modelUrl, anchor: ui.anchor ?? [0, 0, 0] };
   const status = asset?.status;
-  const usable = item?.tags?.usable_for_3d && item.tags.clean_image;
+  const usable = garment?.tags?.usable_for_3d && garment.tags.clean_image;
   if (usable && status !== "ready" && status !== "failed" && conversionPending(itemId)) return null;
   return { type: "model_failed", itemId };
 }
@@ -127,9 +127,9 @@ function garmentUrls(ids: string[], base: BodyBase) {
   const layered = slots.has("top") || slots.has("onepiece");
   const urls = new Set<string>();
   for (const id of ids) {
-    const item = items[id];
-    const asset = assets[id] ?? item?.asset;
-    const ui = item ? toUiItem(item, base, asset) : null;
+    const garment = items[id];
+    const asset = assets[id] ?? garment?.asset;
+    const ui = garment ? toUiGarment(garment, base, asset) : null;
     if (!ui) continue;
     const template = asset?.template_id ?? TEMPLATE_FOR_SLOT[ui.slot];
     const open = layered && ui.slot === "outer";
@@ -187,15 +187,15 @@ function orchestrate(prompt: string) {
     const res = await listings(prompt).catch(() => null);
     if (!live()) return;
     scanned = res?.total ?? 0;
-    const items = res ? bestCards(res.items) : [];
-    items.forEach((item, i) =>
+    const garments = res ? bestCards(res.garments) : [];
+    garments.forEach((garment, i) =>
       later(CARD_DELAY_MS + CARD_STAGGER_MS * i, () => {
-        listed.add(item.id);
-        emit({ type: "listing", item: toListing(item), scanned });
-        if (i === items.length - 1) found();
+        listed.add(garment.id);
+        emit({ type: "listing", item: toListing(garment), scanned });
+        if (i === garments.length - 1) found();
       }),
     );
-    if (!items.length) found();
+    if (!garments.length) found();
   }
 
   function found() {

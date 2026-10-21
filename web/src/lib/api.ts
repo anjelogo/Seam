@@ -2,11 +2,12 @@ import type {
   ApiError,
   Asset3D,
   Category,
+  Garment,
+  GarmentsResponse,
   GenJob,
-  Item,
-  ItemsResponse,
-  OutfitResponse,
+  OutfitResponseV3,
   Slot,
+  Source,
   StyleQuery,
 } from "@shared/types";
 
@@ -55,17 +56,27 @@ export const getLooks = () => request<(Look & { id: string })[]>("/api/me/looks"
 
 export const postLook = (look: Look) => post<Look & { id: string }>("/api/me/looks", look);
 
-export const postOutfits = (query: StyleQuery) => post<OutfitResponse>("/api/outfits", query);
+export const postOutfits = (query: StyleQuery) => post<OutfitResponseV3>("/api/outfits?v=3", query);
 
-export function getItems(
-  params: { slot?: Slot; category?: Category; q?: string; max_cents?: number; limit?: number; offset?: number } = {},
+export function getGarments(
+  params: {
+    slot?: Slot;
+    category?: Category;
+    q?: string;
+    max_cents?: number;
+    sources?: Source[];
+    limit?: number;
+    offset?: number;
+  } = {},
 ) {
+  const { sources, ...rest } = params;
   const qs = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v !== undefined) qs.set(k, String(v));
-  return request<ItemsResponse>(`/api/items?${qs}`);
+  for (const [k, v] of Object.entries(rest)) if (v !== undefined) qs.set(k, String(v));
+  for (const source of sources ?? []) qs.append("sources", source);
+  return request<GarmentsResponse>(`/api/garments?${qs}`);
 }
 
-export const getItem = (id: string) => request<Item>(`/api/items/${encodeURIComponent(id)}`);
+export const getGarment = (id: string) => request<Garment>(`/api/garments/${encodeURIComponent(id)}`);
 
 export const postGenJob = (job: GenJob) => post<Asset3D>("/gen3d/jobs", job);
 

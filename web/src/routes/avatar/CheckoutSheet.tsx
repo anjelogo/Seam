@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { TeeLoader } from "../../components/brand";
 import { Button, IconButton, IconClose, TextLink } from "../../components/ui";
 import type { UiItem } from "../../lib/viewmodel";
-import { useLook, useStage, useWornItems } from "../../state";
+import { useStage, useWornItems } from "../../state";
 import styles from "./CheckoutSheet.module.css";
 
 const PAY_MS = 1200;
@@ -20,7 +20,6 @@ export default function CheckoutSheet() {
 
 function Sheet() {
   const worn = useWornItems();
-  const listings = useLook((s) => s.items);
   const [step, setStep] = useState<"review" | "paying" | "done">("review");
   const [paid, setPaid] = useState<UiItem[]>([]);
   const [broken, setBroken] = useState<string[]>([]);
@@ -29,10 +28,7 @@ function Sheet() {
   const titleId = useId();
 
   const items = step === "review" ? worn : paid;
-  const subtotal = items.reduce((sum, item) => sum + item.priceCents, 0);
-  const shipping = items.flatMap((item) => listings[item.id]?.listing.shipping?.cents ?? []);
-  const shippingCents = shipping.reduce((sum, cents) => sum + cents, 0);
-  const total = subtotal + shippingCents;
+  const total = items.reduce((sum, item) => sum + item.priceCents, 0);
   const done = step === "done";
   const title = done ? "you're all set." : "checkout";
 
@@ -111,13 +107,7 @@ function Sheet() {
       {!done && (
         <dl className={styles.totals}>
           <dt>subtotal</dt>
-          <dd>{usd(subtotal)}</dd>
-          {shipping.length > 0 && (
-            <>
-              <dt>shipping</dt>
-              <dd>{usd(shippingCents)}</dd>
-            </>
-          )}
+          <dd>{usd(total)}</dd>
           <dt className={styles.total}>total</dt>
           <dd className={styles.total}>{usd(total)}</dd>
         </dl>

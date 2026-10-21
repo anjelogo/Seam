@@ -1,4 +1,5 @@
-import type { Category, Item, Slot } from "@shared/types";
+import { bestListing, listingTotalCents } from "@shared/types";
+import type { Category, Garment, Slot } from "@shared/types";
 import { TEE_PATH } from "../components/brand/tee";
 import { easeOut } from "./motion";
 import type { Look } from "./viewmodel";
@@ -117,25 +118,26 @@ export const silhouetteFor = (category: Category): Silhouette => SILHOUETTE_FOR[
 // tags.clean_image urls point at transparent cutouts
 export const isCutout = (url: string) => url.startsWith("/static/clean/");
 
-function colorOf(item: Item) {
-  const hex = item.tags?.colors[0]?.hex.trim() ?? "";
+function colorOf(garment: Garment) {
+  const hex = garment.tags?.colors[0]?.hex.trim() ?? "";
   if (!HEX.test(hex)) return undefined;
   return hex.startsWith("#") ? hex : `#${hex}`;
 }
 
-export function toListing(item: Item): Listing {
-  const { listing, tags } = item;
+export function toListing(garment: Garment): Listing {
+  const { tags } = garment;
+  const best = bestListing(garment);
   return {
-    id: item.id,
-    name: listing.title,
+    id: garment.id,
+    name: best.title,
     category: tags ? CATEGORY_FOR[tags.slot] : "tops",
     silhouette: silhouetteFor(tags?.category ?? "unknown"),
-    source: listing.source,
-    price: listing.price.cents / 100,
-    size: tags?.size_normalized ?? listing.size_raw ?? undefined,
-    imageUrl: tags?.clean_image?.url ?? listing.images[0]?.url ?? "",
-    listingUrl: listing.url,
-    color: colorOf(item),
+    source: best.source,
+    price: listingTotalCents(best) / 100,
+    size: tags?.size_normalized ?? best.size_raw ?? undefined,
+    imageUrl: tags?.clean_image?.url ?? garment.best_photo?.url ?? best.photos[0]?.url ?? "",
+    listingUrl: best.url,
+    color: colorOf(garment),
   };
 }
 

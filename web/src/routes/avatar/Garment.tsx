@@ -1,13 +1,13 @@
 import { useGLTF } from "@react-three/drei";
 import { SLOT_LAYER_ORDER } from "@shared/types";
-import type { Asset3D, BodyBase, Item, Slot } from "@shared/types";
+import type { Asset3D, BodyBase, Garment, Slot } from "@shared/types";
 import { Component, Suspense, useDeferredValue, useMemo } from "react";
 import type { ReactNode } from "react";
 import { Color, Mesh } from "three";
 import type { MeshStandardMaterial } from "three";
 import { garmentFit } from "../../lib/fit";
 import type { GarmentFit } from "../../lib/fit";
-import { toUiItem } from "../../lib/viewmodel";
+import { toUiGarment } from "../../lib/viewmodel";
 import type { UiItem } from "../../lib/viewmodel";
 import { DEFAULT_PROFILE, useLook, useProfile } from "../../state";
 import { useBodyMorphs, useFitMorphs } from "./morphs";
@@ -25,7 +25,7 @@ const HEX = /^#?(?:[0-9a-f]{3}){1,2}$/i;
 const NUDGE = 0.006;
 
 type Source = { url: string; kind: "model" | "template" };
-type Piece = { item: Item; ui: UiItem; layer: number; sources: Source[]; tint: string };
+type Piece = { item: Garment; ui: UiItem; layer: number; sources: Source[]; tint: string };
 
 export class Boundary extends Component<{ fallback?: ReactNode; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -39,7 +39,7 @@ export class Boundary extends Component<{ fallback?: ReactNode; children: ReactN
   }
 }
 
-function tintOf(item: Item) {
+function tintOf(item: Garment) {
   const color = item.tags?.colors[0];
   const hex = color?.hex.trim() ?? "";
   if (HEX.test(hex)) return hex.startsWith("#") ? hex : `#${hex}`;
@@ -101,7 +101,7 @@ export default function Garments({ base }: { base: BodyBase }) {
       .flatMap((id): Piece[] => {
         const item = items[id];
         const asset = assets[id] ?? item?.asset;
-        const ui = item ? toUiItem(item, base, asset) : null;
+        const ui = item ? toUiGarment(item, base, asset) : null;
         if (!ui) return [];
         const templateId =
           asset?.template_id ?? (item.tags?.category === "boots" ? "boot_v1" : TEMPLATE_FOR_SLOT[ui.slot]);

@@ -1,10 +1,10 @@
 import { formatMoney, SLOT_LAYER_ORDER } from "@shared/types";
-import type { Asset3D, BodyBase, GenJob, Item, Outfit, OutfitResponse, Slot, StyleQuery } from "@shared/types";
+import type { Asset3D, BodyBase, Garment, GenJob, Outfit, OutfitResponseV3, Slot, StyleQuery } from "@shared/types";
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { getItem, getLooks, pollGenJob, postGenJob, postLook, postOutfits } from "../lib/api";
-import { slotLabel, toUiItem } from "../lib/viewmodel";
+import { getGarment, getLooks, pollGenJob, postGenJob, postLook, postOutfits } from "../lib/api";
+import { slotLabel, toUiGarment } from "../lib/viewmodel";
 import type { Look, UiItem } from "../lib/viewmodel";
 import { useProfile } from "./profile";
 import { safeStorage } from "./storage";
@@ -12,7 +12,7 @@ import { safeStorage } from "./storage";
 type LookState = {
   prompt: string;
   outfits: Outfit[];
-  items: Record<string, Item>;
+  items: Record<string, Garment>;
   worn: string[];
   assets: Record<string, Asset3D>;
   saved: Look[];
@@ -22,19 +22,27 @@ type LookState = {
   toggle(id: string): void;
   takeOff(id: string): void;
   wearLook(look: Look): Promise<void>;
-  addItems(items: Item[]): void;
+  addItems(items: Garment[]): void;
   ensureAssets(): void;
   clearError(): void;
 };
 
 type Dressed = Pick<LookState, "items" | "outfits" | "worn" | "assets" | "saved">;
+type Persisted = Dressed & Pick<LookState, "prompt">;
+
+const EMPTY_LOOK: Persisted = { prompt: "", outfits: [], items: {}, worn: [], assets: {}, saved: [] };
+
+const promptOf = (persisted: unknown) => {
+  const prompt = (persisted as { prompt?: unknown } | null)?.prompt;
+  return typeof prompt === "string" ? prompt : "";
+};
 
 const SAVED_LIMIT = 12;
 const converting = new Set<string>();
 let buildSeq = 0;
 
-function slotOf(item: Item | undefined): Slot | null {
-  const slot = item?.tags?.slot;
+function slotOf(garment: Garment | undefined): Slot | null {
+  const slot = garment?.tags?.slot;
   return slot && slotLabel(slot) ? slot : null;
 }
 
@@ -64,17 +72,17 @@ function styleQuery(prompt: string): StyleQuery {
 
 export const requestOutfits = (prompt: string) => postOutfits(styleQuery(prompt));
 
-function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Dressed | null {
+function wearOutfit(state: LookState, prompt: string, res: OutfitResponseV3): Dressed | null {
   const outfit = res.outfits[0];
   if (!outfit) return null;
-  const items = { ...state.items, ...res.items };
+  const items = { ...state.items, ...res.garments };
   const ids = SLOT_LAYER_ORDER.map((slot) => outfit.pieces[slot]?.item_id);
   const worn = [...new Set(ids)].filter((id): id is string => !!id && slotOf(items[id]) !== null);
   if (!worn.length) return null;
   const assets = { ...state.assets };
-  for (const item of Object.values(res.items)) {
-    const keepReady = assets[item.id]?.status === "ready" && item.asset?.status !== "ready";
-    if (item.asset && !keepReady) assets[item.id] = item.asset;
+  for (const garment of Object.values(res.garments)) {
+    const keepReady = assets[garment.id]?.status === "ready" && garment.asset?.status !== "ready";
+    if (garment.asset && !keepReady) assets[garment.id] = garment.asset;
   }
   const others = state.saved.filter((look) => look.prompt !== prompt || !sameIds(look.itemIds, worn));
   const saved = [{ prompt, itemIds: worn }, ...others].slice(0, SAVED_LIMIT);
@@ -83,7 +91,7 @@ function wearOutfit(state: LookState, prompt: string, res: OutfitResponse): Dres
 
 const saveLook = (look: Look) => void postLook(look).catch(() => {});
 
-export function applyOutfit(prompt: string, res: OutfitResponse): string[] | null {
+export function applyOutfit(prompt: string, res: OutfitResponseV3): string[] | null {
   const next = wearOutfit(useLook.getState(), prompt, res);
   if (!next) return null;
   useLook.setState({ ...next, prompt });
@@ -162,20 +170,22 @@ export const useLook = create<LookState>()(
       },
       takeOff: (id) => set((s) => ({ worn: s.worn.filter((w) => w !== id) })),
       wearLook: async (look) => {
-        // looks synced from another device may reference items not cached here
+        // looks synced from another device may name garments not cached here, or pre-v3 listing ids
         const missing = look.itemIds.filter((id) => !get().items[id]);
-        const fetched = await Promise.all(missing.map((id) => getItem(id).catch(() => null)));
-        get().addItems(fetched.filter((item): item is Item => !!item));
-        set((s) => ({ prompt: look.prompt, worn: look.itemIds.filter((id) => slotOf(s.items[id]) !== null) }));
+        const fetched = await Promise.all(missing.map(async (id) => [id, await getGarment(id).catch(() => null)] as const));
+        get().addItems(fetched.flatMap(([, garment]) => garment ?? []));
+        const resolved = new Map(fetched.flatMap(([id, garment]) => (garment ? [[id, garment.id] as const] : [])));
+        const ids = [...new Set(look.itemIds.map((id) => resolved.get(id) ?? id))];
+        set((s) => ({ prompt: look.prompt, worn: ids.filter((id) => slotOf(s.items[id]) !== null) }));
         get().ensureAssets();
       },
       addItems: (list) =>
         set((s) => {
           const items = { ...s.items };
           const assets = { ...s.assets };
-          for (const item of list) {
-            items[item.id] = item;
-            if (item.asset && !assets[item.id]) assets[item.id] = item.asset;
+          for (const garment of list) {
+            items[garment.id] = garment;
+            if (garment.asset && !assets[garment.id]) assets[garment.id] = garment.asset;
           }
           return { items, assets };
         }),
@@ -199,8 +209,11 @@ export const useLook = create<LookState>()(
     }),
     {
       name: "seam.look",
+      version: 3,
       storage: safeStorage,
       partialize: ({ prompt, outfits, items, worn, assets, saved }) => ({ prompt, outfits, items, worn, assets, saved }),
+      // older blobs name listings, not garments: nothing but the prompt survives
+      migrate: (persisted) => ({ ...EMPTY_LOOK, prompt: promptOf(persisted) }),
     },
   ),
 );
@@ -212,8 +225,8 @@ const useBase = () => useProfile((s) => s.profile?.base ?? "masc");
 
 const layer = (item: UiItem) => SLOT_LAYER_ORDER.indexOf(item.slot);
 
-function uiItem(item: Item | undefined, base: BodyBase, assets: Record<string, Asset3D>) {
-  return item ? toUiItem(item, base, assets[item.id] ?? item.asset) : null;
+function uiItem(garment: Garment | undefined, base: BodyBase, assets: Record<string, Asset3D>) {
+  return garment ? toUiGarment(garment, base, assets[garment.id] ?? garment.asset) : null;
 }
 
 export function useWornItems(): UiItem[] {
@@ -229,12 +242,12 @@ export function useWornItems(): UiItem[] {
 
 export function useUiItem(id: string | null): UiItem | null {
   const base = useBase();
-  const item = useLook((s) => (id ? s.items[id] : undefined));
+  const garment = useLook((s) => (id ? s.items[id] : undefined));
   const asset = useLook((s) => (id ? s.assets[id] : undefined));
-  return useMemo(() => (item ? toUiItem(item, base, asset ?? item.asset) : null), [item, asset, base]);
+  return useMemo(() => (garment ? toUiGarment(garment, base, asset ?? garment.asset) : null), [garment, asset, base]);
 }
 
-export function useUiItems(list: Item[]): UiItem[] {
+export function useUiItems(list: Garment[]): UiItem[] {
   const base = useBase();
   const assets = useLook((s) => s.assets);
   return useMemo(() => list.flatMap((item) => uiItem(item, base, assets) ?? []), [list, assets, base]);

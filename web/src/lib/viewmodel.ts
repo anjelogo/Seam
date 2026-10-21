@@ -1,5 +1,5 @@
-import { formatMoney } from "@shared/types";
-import type { Asset3D, AssetStatus, BodyBase, BodyProfile, Item, Slot, Transform } from "@shared/types";
+import { bestListing, formatMoney, listingTotalCents } from "@shared/types";
+import type { Asset3D, AssetStatus, BodyBase, BodyProfile, Garment, Slot, Transform } from "@shared/types";
 
 export type UiCategory = "tops" | "bottoms" | "outerwear" | "shoes";
 
@@ -13,7 +13,9 @@ export type UiItem = {
   priceCents: number;
   currency: string;
   priceLabel: string;
+  otherStores: { source: string; priceLabel: string }[];
   size?: string;
+  condition?: string;
   imageUrl: string;
   listingUrl: string;
   modelUrl?: string;
@@ -73,24 +75,36 @@ export function modelUrlFor(asset: Asset3D | null | undefined, base: BodyBase): 
   return base === "fem" && asset.follows_body_morphs ? asset.glb_url.replace(/\.glb$/, "_fem.glb") : asset.glb_url;
 }
 
-export function toUiItem(item: Item, base: BodyBase, asset?: Asset3D | null): UiItem | null {
-  const { listing, tags } = item;
+const storeLabel = (cents: number, currency: string) => formatMoney({ cents, currency });
+
+export function toUiGarment(garment: Garment, base: BodyBase, asset?: Asset3D | null): UiItem | null {
+  const { tags } = garment;
   const category = tags ? slotLabel(tags.slot) : null;
   if (!tags || !category) return null;
-  const current = asset === undefined ? item.asset : asset;
+  const best = bestListing(garment);
+  const current = asset === undefined ? garment.asset : asset;
+  const priceCents = listingTotalCents(best);
   return {
-    id: item.id,
-    name: listing.title,
+    id: garment.id,
+    name: best.title,
     category,
     slot: tags.slot,
-    source: listing.source,
-    price: listing.price.cents / 100,
-    priceCents: listing.price.cents,
-    currency: listing.price.currency,
-    priceLabel: formatMoney(listing.price),
-    size: tags.size_normalized ?? listing.size_raw ?? undefined,
-    imageUrl: tags.clean_image?.url ?? listing.images[0]?.url ?? "",
-    listingUrl: listing.url,
+    source: best.source,
+    price: priceCents / 100,
+    priceCents,
+    currency: best.price.currency,
+    priceLabel: storeLabel(priceCents, best.price.currency),
+    otherStores: garment.listings
+      .filter((listing) => listing.status === "active" && listing.id !== best.id)
+      .sort((a, b) => listingTotalCents(a) - listingTotalCents(b))
+      .map((listing) => ({
+        source: listing.source,
+        priceLabel: storeLabel(listingTotalCents(listing), listing.price.currency),
+      })),
+    size: tags.size_normalized ?? best.size_raw ?? undefined,
+    condition: best.assessed_condition === "unknown" ? undefined : best.assessed_condition.replace(/_/g, " "),
+    imageUrl: tags.clean_image?.url ?? garment.best_photo?.url ?? best.photos[0]?.url ?? "",
+    listingUrl: best.url,
     modelUrl: modelUrlFor(current, base),
     usableFor3d: tags.usable_for_3d,
     followsBodyMorphs: current?.follows_body_morphs ?? false,

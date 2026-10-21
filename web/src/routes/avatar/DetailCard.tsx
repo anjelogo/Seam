@@ -22,6 +22,8 @@ export default function DetailCard() {
   if (!item) return null;
 
   const note = raw ? sizeNote(garmentFit(raw, profile).sizeDelta) : null;
+  const stores = item.otherStores;
+  const storesLabel = `${stores.length} more ${stores.length === 1 ? "store" : "stores"}`;
 
   const takeOff = () => {
     useLook.getState().takeOff(item.id);
@@ -51,7 +53,15 @@ export default function DetailCard() {
             {note && <InfoTip text={note} label="about this size" className={styles.tip} />}
           </span>
         )}
+        {item.condition && <span className="t-muted">{item.condition}</span>}
         <span className={styles.price}>{item.priceLabel}</span>
+        {stores.length > 0 && (
+          <InfoTip
+            text={`${storesLabel}: ${stores.map((store) => `${store.source} ${store.priceLabel}`).join(" · ")}`}
+            label={storesLabel}
+            className={styles.tip}
+          />
+        )}
       </p>
       <TextLink href={item.listingUrl} external className={styles.link}>
         view listing ↗

@@ -1,11 +1,11 @@
-import type { Item } from "@shared/types";
+import type { Garment } from "@shared/types";
 import { create } from "zustand";
-import { getItems } from "../lib/api";
+import { getGarments } from "../lib/api";
 import { useLook } from "./look";
 
 type InventoryState = {
   query: string;
-  results: Item[];
+  results: Garment[];
   loading: boolean;
   error: string | null;
   search(q: string, immediate?: boolean): void;
@@ -26,10 +26,10 @@ export const useInventory = create<InventoryState>()((set) => ({
     const run = async () => {
       set({ loading: true });
       try {
-        const res = await getItems({ q: q.trim() || undefined, limit: 100 });
+        const res = await getGarments({ q: q.trim() || undefined, limit: 100 });
         if (seq !== latest) return;
-        set({ results: res.items, loading: false, error: null });
-        useLook.getState().addItems(res.items);
+        set({ results: res.garments, loading: false, error: null });
+        useLook.getState().addItems(res.garments);
       } catch {
         if (seq === latest) set({ loading: false, error: "search isn't working right now." });
       }
