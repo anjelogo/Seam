@@ -117,6 +117,7 @@ WARP_DEVICE="$(warp_device || true)"
 if printf '%s' "$WARP_DEVICE" | grep -qi cuda; then
     echo "warp already CUDA-enabled (device: $WARP_DEVICE) — skipping build"
 else
+    chmod +x "$WARP/tools/packman/packman" # tracked as 100644 upstream; build_llvm.py execs it
     (cd "$WARP" && CUDA_PATH="$CUDA_PATH" "$PY" build_lib.py)
     uv pip install -e "$WARP"
     WARP_DEVICE="$(warp_device || true)"

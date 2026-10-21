@@ -6,6 +6,8 @@ set -Eeuo pipefail
 STEP="startup"
 trap 'echo >&2; echo "RUN FAILED: step [$STEP] at ${BASH_SOURCE[0]}:${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
+export PATH="$HOME/.local/bin:$PATH"
+
 INPUTS_DIR="${1:-runs/inputs}"
 OUT_DIR="${2:-runs/out}"
 BODIES_DIR="runs/bodies"
@@ -93,7 +95,7 @@ step "texture / export / bind"
     echo "texture failed (module may not exist yet)"
 "${UV[@]}" python -m drape.export --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
     echo "export failed (module may not exist yet)"
-"${UV[@]}" python -m drape.bind --inputs "$INPUTS_DIR" --bodies "$BODIES_DIR" --out "$OUT_DIR" ||
+"${UV[@]}" python -m drape.bind --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
     echo "bind failed (module may not exist yet)"
 
 step "summary"

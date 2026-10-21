@@ -245,7 +245,7 @@ def experiment_layers(args, props_kw: dict, timings: list):
         seg_path.write_text(json.dumps(seg))
         spec_dir, name = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], None, args.wearer)
         props = load_props(**props_kw, material=hoodie.get("material"))
-        drape_one(spec_dir, name + "_layered", merged_name, args.out / hoodie["safe"] / "sim_layered", props, timings, hoodie["safe"])
+        drape_one(spec_dir, name, merged_name, args.out / hoodie["safe"] / "sim_layered", props, timings, hoodie["safe"])
     finally:
         seg_path.write_text(backup)
 
