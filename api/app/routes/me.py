@@ -54,7 +54,13 @@ def get_looks(user: User = Depends(current_user)) -> list[SavedLook]:
         rows = conn.execute(
             "SELECT id, look FROM saved_looks WHERE user_id = %s ORDER BY created_at DESC LIMIT %s", (user.id, SAVED_LIMIT)
         ).fetchall()
-    return [SavedLook(id=r["id"], **r["look"]) for r in rows]
+        # looks saved before v3 hold listing ids
+        legacy = db.garments_for_listings(conn, [i for r in rows for i in r["look"]["itemIds"] if ":" in i])
+    looks = []
+    for r in rows:
+        ids = [legacy[i] if ":" in i else i for i in r["look"]["itemIds"] if ":" not in i or i in legacy]
+        looks.append(SavedLook(id=r["id"], prompt=r["look"]["prompt"], itemIds=list(dict.fromkeys(ids))))
+    return looks
 
 
 @router.post("/looks", status_code=201, response_model=SavedLook)

@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Literal
 from uuid import UUID
 
-from psycopg import AsyncConnection, Connection
+from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool, ConnectionPool
 
@@ -16,6 +16,7 @@ from seam_shared.models import (
     Asset3D,
     Condition,
     Garment,
+    ImageRef,
     ImageView,
     Item,
     ItemTags,
@@ -30,8 +31,16 @@ from seam_shared.models import (
     Wrinkle,
 )
 
-ITEM_SELECT = "SELECT listings.id, listings.listing, listings.tags, assets.json AS asset FROM listings LEFT JOIN assets ON assets.item_id = listings.id"
-ORDERS = {"id": "listings.id", "price": "listings.price_cents + coalesce(listings.ship_cents, 0), listings.id", "newest": "listings.first_seen DESC, listings.id"}
+# best = the garment's cheapest listing of the wanted status: the price and source filters apply to it
+GARMENT_BEST = """
+JOIN LATERAL (
+    SELECT l.id, l.source, l.price_cents + coalesce(l.ship_cents, 0) AS total
+    FROM listings l WHERE l.garment_id = garments.id{status}
+    ORDER BY total, l.id LIMIT 1
+) best ON true
+LEFT JOIN assets ON assets.garment_id = garments.id
+"""
+GARMENT_ORDERS = {"id": "garments.id", "price": "best.total, garments.id", "newest": "garments.created_at DESC, garments.id"}
 UPSERT_LISTING = """
 INSERT INTO listings (id, source, source_id, url, title, price_cents, ship_cents, currency, brand, size_raw, condition, listing, seller, brand_raw, stated_condition)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
@@ -85,15 +94,6 @@ def apool() -> AsyncConnectionPool:
     return _apool
 
 
-def _item(row: dict) -> Item:
-    return Item(
-        id=row["id"],
-        listing=Listing.model_validate(row["listing"]),
-        tags=ItemTags.model_validate(row["tags"]) if row["tags"] else None,
-        asset=Asset3D.model_validate(row["asset"]) if row["asset"] else None,
-    )
-
-
 def norm_seller(name: str | None) -> str | None:
     return (re.sub(r"[^a-z0-9]", "", name.lower()) or None) if name else None
 
@@ -109,11 +109,6 @@ def _listing_params(listing: Listing) -> tuple:
 
 def upsert_listing(conn: Connection, listing: Listing) -> Literal["added", "updated"]:
     row = conn.execute(UPSERT_LISTING, _listing_params(listing)).fetchone()
-    return "added" if row["added"] else "updated"
-
-
-async def aupsert_listing(conn: AsyncConnection, listing: Listing) -> Literal["added", "updated"]:
-    row = await (await conn.execute(UPSERT_LISTING, _listing_params(listing))).fetchone()
     return "added" if row["added"] else "updated"
 
 
@@ -261,55 +256,60 @@ def untagged_garment_ids(conn: Connection, limit: int) -> list[str]:
     return [r["id"] for r in rows]
 
 
-def save_tags(conn: Connection, item_id: str, listing: Listing, tags: ItemTags) -> None:
-    conn.execute(
-        "UPDATE listings SET listing = %s::jsonb, condition = %s, tags = %s::jsonb, slot = %s, category = %s, usable_3d = %s, tagged_at = now() WHERE id = %s",
-        (listing.model_dump_json(), listing.condition.value, tags.model_dump_json(), tags.slot.value, tags.category.value, tags.usable_for_3d, item_id),
-    )
-
-
-def untagged_ids(conn: Connection, limit: int) -> list[str]:
-    rows = conn.execute("SELECT id FROM listings WHERE tags IS NULL AND status = 'active' ORDER BY first_seen LIMIT %s", (limit,))
-    return [r["id"] for r in rows]
-
-
-def get_item(conn: Connection, item_id: str) -> Item | None:
-    row = conn.execute(f"{ITEM_SELECT} WHERE listings.id = %s", (item_id,)).fetchone()
-    return _item(row) if row else None
-
-
-def _items_sql(*, ids=None, slot=None, category=None, q=None, max_cents=None, sources=None, require_3d_ready=False,
-               usable_3d=None, status="active", order="id", limit=50, offset=0) -> tuple[str, list, str, list]:
+def _garments_sql(*, ids=None, slot=None, category=None, q=None, max_cents=None, sources=None, require_3d_ready=False,
+                  usable_3d=None, status="active", order="id", limit=50, offset=0) -> tuple[str, list, str, list]:
+    status_and = "" if status is None else " AND l.status = %s"
+    frm = f"FROM garments {GARMENT_BEST.format(status=status_and)}"
+    params = [] if status is None else [status]
     filters = [
-        ("listings.id = ANY(%s)", None if ids is None else list(ids)),
-        ("listings.slot = %s", slot),
-        ("listings.category = %s", category),
-        ("listings.usable_3d = %s", usable_3d),
-        ("listings.title ILIKE %s", f"%{q}%" if q else None),
-        ("listings.price_cents + coalesce(listings.ship_cents, 0) <= %s", max_cents),
-        ("listings.source = ANY(%s)", list(sources) if sources else None),
-        ("listings.status = %s", status),
+        ("garments.id = ANY(%s)", None if ids is None else list(ids)),
+        ("garments.slot = %s", slot),
+        ("garments.category = %s", category),
+        ("garments.usable_3d = %s", usable_3d),
+        ("best.total <= %s", max_cents),
+        ("best.source = ANY(%s)", list(sources) if sources else None),
     ]
     used = [(clause, value) for clause, value in filters if value is not None]
-    clauses = [clause for clause, _ in used] + (["assets.json->>'status' = 'ready'"] if require_3d_ready else [])
+    clauses = [clause for clause, _ in used]
+    params += [value for _, value in used]
+    if q:
+        clauses.append(f"EXISTS (SELECT 1 FROM listings l WHERE l.garment_id = garments.id{status_and} AND l.title ILIKE %s)")
+        params += ([] if status is None else [status]) + [f"%{q}%"]
+    if require_3d_ready:
+        clauses.append("assets.json->>'status' = 'ready'")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    params = [value for _, value in used]
-    count = f"SELECT count(*) AS n FROM listings LEFT JOIN assets ON assets.item_id = listings.id{where}"
-    page = f"{ITEM_SELECT}{where} ORDER BY {ORDERS[order]} LIMIT %s OFFSET %s"
+    count = f"SELECT count(*) AS n {frm}{where}"
+    page = f"SELECT garments.id {frm}{where} ORDER BY {GARMENT_ORDERS[order]} LIMIT %s OFFSET %s"
     return count, params, page, [*params, limit, offset]
 
 
-def get_items(conn: Connection, **filters) -> tuple[list[Item], int]:
-    count, params, page, page_params = _items_sql(**filters)
+def get_garments(conn: Connection, **filters) -> tuple[list[Garment], int]:
+    count, params, page, page_params = _garments_sql(**filters)
     total = conn.execute(count, params).fetchone()["n"]
-    return [_item(r) for r in conn.execute(page, page_params)], total
+    ids = [r["id"] for r in conn.execute(page, page_params)]
+    found = get_garments_by_id(conn, ids)
+    return [found[i] for i in ids if i in found], total
 
 
-async def aget_items(conn: AsyncConnection, **filters) -> tuple[list[Item], int]:
-    count, params, page, page_params = _items_sql(**filters)
-    total = (await (await conn.execute(count, params)).fetchone())["n"]
-    rows = await (await conn.execute(page, page_params)).fetchall()
-    return [_item(r) for r in rows], total
+def compat_item(garment: Garment, listing_id: str | None = None) -> Item:
+    """The v2 Item shape for one of a garment's listings, keyed by the garment id."""
+    offer = next((o for o in garment.listings if o.id == listing_id), garment.best_listing())
+    tags = garment.tags
+    if tags:
+        best = garment.best_photo
+        tags = tags.model_copy(update={"best_view_index": best.idx if best and best.listing_id == offer.id else 0})
+    condition = offer.assessed_condition if offer.assessed_condition != Condition.unknown else offer.stated_condition
+    return Item(
+        id=garment.id,
+        listing=Listing(
+            source=offer.source, source_id=offer.id.split(":", 1)[1], url=offer.url, title=offer.title, description=offer.description,
+            price=offer.price, shipping=offer.shipping, condition=condition, brand=offer.brand_raw, size_raw=offer.size_raw,
+            images=[ImageRef(url=p.url, width=p.width, height=p.height, view=p.view) for p in offer.photos],
+            seller=offer.seller, scraped_at=offer.last_seen,
+        ),
+        tags=tags,
+        asset=garment.asset,
+    )
 
 
 def save_outfits(conn: Connection, outfits: list[Outfit], user_id: UUID | None = None) -> None:

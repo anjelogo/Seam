@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth.origin import check_origin
-from app.routes import auth, health, items, me, outfits
+from app.routes import auth, garments, health, items, me, outfits
 from app.settings import DATA_DIR
 
 
@@ -40,7 +40,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for module in (health, outfits, items, auth, me):
+    for module in (health, outfits, garments, items, auth, me):
         app.include_router(module.router)
     for sub in ("raw", "clean", "glb", "thumb"):
         app.mount(f"/static/{sub}", StaticFiles(directory=DATA_DIR / sub, check_dir=False), name=f"static_{sub}")
