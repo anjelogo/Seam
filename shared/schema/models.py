@@ -11,7 +11,7 @@ Ownership:
 
 Conventions:
   - Money is integer cents. Never floats.
-  - IDs are strings. Item.id = f"{source}:{source_id}" (stable across re-scrapes).
+  - IDs are strings. ListingOffer.id = f"{source}:{source_id}" (stable across re-scrapes); Garment.id = g_<ulid>, also the compat Item.id.
   - Timestamps are UTC ISO-8601.
   - Every enum has an `other`/`unknown` escape hatch so bad data never crashes ingest.
 """

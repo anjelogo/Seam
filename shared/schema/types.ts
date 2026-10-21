@@ -2,7 +2,7 @@
  * Shared contract — TS mirror of shared/schema/models.py.
  * models.py is SOURCE OF TRUTH. Change both in same commit.
  *
- * Money = integer cents. IDs = strings. Item.id = `${source}:${source_id}`.
+ * Money = integer cents. IDs = strings. ListingOffer.id = `${source}:${source_id}`; Garment.id = `g_<ulid>`, also the compat Item.id.
  */
 
 // ───────────── enums (string unions) ─────────────

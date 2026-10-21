@@ -297,7 +297,8 @@ def compat_item(garment: Garment, listing_id: str | None = None) -> Item:
     tags = garment.tags
     if tags:
         best = garment.best_photo
-        tags = tags.model_copy(update={"best_view_index": best.idx if best and best.listing_id == offer.id else 0})
+        index = next((i for i, p in enumerate(offer.photos) if best and p.id == best.id), 0)
+        tags = tags.model_copy(update={"best_view_index": index})
     condition = offer.assessed_condition if offer.assessed_condition != Condition.unknown else offer.stated_condition
     return Item(
         id=garment.id,
@@ -310,6 +311,12 @@ def compat_item(garment: Garment, listing_id: str | None = None) -> Item:
         tags=tags,
         asset=garment.asset,
     )
+
+
+# v2 shape for callers not moved to garments yet (gen3d/drape)
+def get_items(conn: Connection, **filters) -> tuple[list[Item], int]:
+    garments, total = get_garments(conn, **filters)
+    return [compat_item(g) for g in garments], total
 
 
 def save_outfits(conn: Connection, outfits: list[Outfit], user_id: UUID | None = None) -> None:
