@@ -1,0 +1,131 @@
+=== engine identity under PYTHONPATH override ===
+1.9.1 /workspace/spike/wp/1.9.1/warp/__init__.py
+=== engine identity WITHOUT override (fork) ===
+1.0.0-beta.6 /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/__init__.py
+=== license metadata of overridden engine ===
+License: Apache-2.0
+License-File: LICENSE.md
+
+=== GAP PROBE: upstream warp (Apache-2.0) ===
+warp 1.9.1 from /workspace/spike/wp/1.9.1/warp/__init__.py
+
+-- modules --
+Warp DeprecationWarning: The `warp.sim` module is deprecated and will be removed in v1.10. Please transition to using the forthcoming Newton library instead.
+  OK      warp.sim
+  OK      warp.sim.utils
+  OK      warp.sim.collide
+  OK      warp.sim.integrator_xpbd
+  OK      warp.sim.render
+  OK      warp.collision.panel_assignment
+
+-- module functions --
+  MISSING  warp.sim.utils.implicit_laplacian_smoothing
+  MISSING  warp.sim.collide.count_self_intersections
+  MISSING  warp.sim.collide.count_body_cloth_intersections
+  MISSING  warp.sim.integrator_xpbd.replace_mesh_points
+
+-- ModelBuilder methods --
+  OK       ModelBuilder.add_cloth_mesh
+  OK       ModelBuilder.add_shape_mesh
+  MISSING  ModelBuilder.add_attachment
+  MISSING  ModelBuilder.add_cloth_mesh_sewing_spring
+  MISSING  ModelBuilder.add_cloth_reference_labels
+  MISSING  ModelBuilder.add_cloth_reference_shape_mesh
+
+-- Model attributes (source scan) --
+  MISSING  Model.attachment_constraint
+  MISSING  Model.cloth_reference_drag
+  MISSING  Model.cloth_reference_k
+  MISSING  Model.cloth_reference_margin
+  MISSING  Model.cloth_reference_watertight_whole_shape_index
+  MISSING  Model.global_viscous_damping
+  MISSING  Model.global_collision_filter
+  MISSING  Model.enable_edge_edge_collisions
+  MISSING  Model.enable_triangle_particle_collisions
+  MISSING  Model.enable_particle_particle_collisions
+  MISSING  Model.particle_self_intersection_count
+  MISSING  Model.body_cloth_intersection_count
+  OK       Model.particle_max_velocity
+
+-- native builtins --
+  MISSING  wp.mesh_query_edge
+  MISSING  wp.mesh_query_ray
+
+=== GAP PROBE: fork (non-commercial), for contrast ===
+warp 1.0.0-beta.6 from /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/__init__.py
+
+-- modules --
+  OK      warp.sim
+  OK      warp.sim.utils
+  OK      warp.sim.collide
+  OK      warp.sim.integrator_xpbd
+  OK      warp.sim.render
+  OK      warp.collision.panel_assignment
+
+-- module functions --
+  OK       warp.sim.utils.implicit_laplacian_smoothing
+  OK       warp.sim.collide.count_self_intersections
+  OK       warp.sim.collide.count_body_cloth_intersections
+  OK       warp.sim.integrator_xpbd.replace_mesh_points
+
+-- ModelBuilder methods --
+  OK       ModelBuilder.add_cloth_mesh
+  OK       ModelBuilder.add_shape_mesh
+  OK       ModelBuilder.add_attachment
+  OK       ModelBuilder.add_cloth_mesh_sewing_spring
+  OK       ModelBuilder.add_cloth_reference_labels
+  OK       ModelBuilder.add_cloth_reference_shape_mesh
+
+-- Model attributes (source scan) --
+  OK       Model.attachment_constraint
+  OK       Model.cloth_reference_drag
+  OK       Model.cloth_reference_k
+  OK       Model.cloth_reference_margin
+  OK       Model.cloth_reference_watertight_whole_shape_index
+  OK       Model.global_viscous_damping
+  MISSING  Model.global_collision_filter
+  OK       Model.enable_edge_edge_collisions
+  OK       Model.enable_triangle_particle_collisions
+  OK       Model.enable_particle_particle_collisions
+  OK       Model.particle_self_intersection_count
+  OK       Model.body_cloth_intersection_count
+  OK       Model.particle_max_velocity
+
+-- native builtins --
+  OK       wp.mesh_query_edge
+  OK       wp.mesh_query_ray
+
+=== PORT PATTERN depop_958293311 ===
+depop_958293311: pattern on size_top_L -> runs/out_spike_port/depop_958293311/pattern/depop_958293311__size_top_L (4.51s, spec=ok)
+pattern depop_958293311 rc=0
+=== PORT DRAPE depop_958293311 ===
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/seam/gen3d/drape/drape/drape.py", line 15, in <module>
+    import pygarment.meshgen.simulation as sim_mod
+  File "/workspace/seam/gen3d/drape/vendor/GarmentCode/pygarment/meshgen/simulation.py", line 29, in <module>
+    from pygarment.meshgen.garment import Cloth
+  File "/workspace/seam/gen3d/drape/vendor/GarmentCode/pygarment/meshgen/garment.py", line 10, in <module>
+    from warp.sim.utils import implicit_laplacian_smoothing
+ImportError: cannot import name 'implicit_laplacian_smoothing' from 'warp.sim.utils' (/workspace/spike/wp/1.9.1/warp/sim/utils.py)
+Warp DeprecationWarning: The `warp.sim` module is deprecated and will be removed in v1.10. Please transition to using the forthcoming Newton library instead.
+drape depop_958293311 rc=1 wall=10s
+
+=== PORT PATTERN depop_941190262 ===
+depop_941190262: pattern on size_bottom_W32 -> runs/out_spike_port/depop_941190262/pattern/depop_941190262__size_bottom_W32 (2.97s, spec=ok)
+pattern depop_941190262 rc=0
+=== PORT DRAPE depop_941190262 ===
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/seam/gen3d/drape/drape/drape.py", line 15, in <module>
+    import pygarment.meshgen.simulation as sim_mod
+  File "/workspace/seam/gen3d/drape/vendor/GarmentCode/pygarment/meshgen/simulation.py", line 29, in <module>
+    from pygarment.meshgen.garment import Cloth
+  File "/workspace/seam/gen3d/drape/vendor/GarmentCode/pygarment/meshgen/garment.py", line 10, in <module>
+    from warp.sim.utils import implicit_laplacian_smoothing
+ImportError: cannot import name 'implicit_laplacian_smoothing' from 'warp.sim.utils' (/workspace/spike/wp/1.9.1/warp/sim/utils.py)
+Warp DeprecationWarning: The `warp.sim` module is deprecated and will be removed in v1.10. Please transition to using the forthcoming Newton library instead.
+drape depop_941190262 rc=1 wall=10s
+=== PORT ATTEMPT DONE ===
