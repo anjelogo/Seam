@@ -77,7 +77,7 @@ export interface ItemTags {
   category: Category;
   colors: Color[];
   pattern?: string | null;
-  material?: string | null;
+  material?: string | null; // one of MATERIALS
   fit: Fit;
   style_tags: string[];
   era?: string | null;
@@ -308,6 +308,13 @@ export interface OutfitResponseV3 {
   garments: Record<string, Garment>;
   took_ms: number;
 }
+
+// ───────────── material vocabulary ─────────────
+
+export const MATERIALS = [
+  "cotton_jersey", "cotton_twill", "denim", "corduroy", "canvas", "fleece", "knit", "wool", "flannel",
+  "linen", "silk_satin", "nylon", "polyester", "leather", "faux_leather", "suede", "rubber", "mesh", "other",
+] as const;
 
 // ───────────── helpers ─────────────
 

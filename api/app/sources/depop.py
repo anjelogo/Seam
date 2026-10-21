@@ -6,7 +6,7 @@ from typing import Optional
 
 from seam_shared.models import Condition, ImageRef, Listing, Money, Slot, Source
 
-from app.sources import SLOT_WORD
+from app.sources import search_text
 from app.sources.fetch import fetch
 
 CONDITION = {
@@ -26,7 +26,7 @@ async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) ->
     # shortcut: first 24 results per variant (the page ignores cursors, the paging API is gone); vary queries for more
     if page:
         return []
-    q = f"{query} {SLOT_WORD[slot]}" if slot else query
+    q = search_text(query, slot, page)
     pages = await asyncio.gather(*(fetch("https://www.depop.com/search/", source=Source.depop, params={"q": q, **v}) for v in VARIANTS))
     found: dict[int, dict] = {}
     for html in pages:

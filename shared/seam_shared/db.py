@@ -29,6 +29,7 @@ from seam_shared.models import (
     Photo,
     PhotoState,
     Wrinkle,
+    normalize_material,
 )
 
 # best = the garment's cheapest listing of the wanted status: the price and source filters apply to it
@@ -42,13 +43,14 @@ LEFT JOIN assets ON assets.garment_id = garments.id
 """
 GARMENT_ORDERS = {"id": "garments.id", "price": "best.total, garments.id", "newest": "garments.created_at DESC, garments.id"}
 UPSERT_LISTING = """
-INSERT INTO listings (id, source, source_id, url, title, price_cents, ship_cents, currency, brand, size_raw, condition, listing, seller, brand_raw, stated_condition)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+INSERT INTO listings (id, source, source_id, url, title, price_cents, ship_cents, currency, brand, size_raw, condition, listing, seller, brand_raw, stated_condition,
+    scrape_query)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
 ON CONFLICT (id) DO UPDATE SET
     url = excluded.url, title = excluded.title, price_cents = excluded.price_cents, ship_cents = excluded.ship_cents,
     currency = excluded.currency, brand = excluded.brand, size_raw = excluded.size_raw, condition = excluded.condition,
     listing = excluded.listing, seller = excluded.seller, brand_raw = excluded.brand_raw, stated_condition = excluded.stated_condition,
-    status = 'active', last_seen = now()
+    scrape_query = coalesce(listings.scrape_query, excluded.scrape_query), status = 'active', last_seen = now()
 RETURNING xmax = 0 AS added
 """
 UPSERT_PHOTO = """
@@ -98,17 +100,18 @@ def norm_seller(name: str | None) -> str | None:
     return (re.sub(r"[^a-z0-9]", "", name.lower()) or None) if name else None
 
 
-def _listing_params(listing: Listing) -> tuple:
+def _listing_params(listing: Listing, scrape_query: str | None) -> tuple:
     return (
         Item.make_id(listing.source, listing.source_id), listing.source.value, listing.source_id, listing.url, listing.title,
         listing.price.cents, listing.shipping.cents if listing.shipping else None, listing.price.currency,
         listing.brand, listing.size_raw, listing.condition.value, listing.model_dump_json(),
-        norm_seller(listing.seller), listing.brand, listing.condition.value,
+        norm_seller(listing.seller), listing.brand, listing.condition.value, scrape_query,
     )
 
 
-def upsert_listing(conn: Connection, listing: Listing) -> Literal["added", "updated"]:
-    row = conn.execute(UPSERT_LISTING, _listing_params(listing)).fetchone()
+def upsert_listing(conn: Connection, listing: Listing, scrape_query: str | None = None) -> Literal["added", "updated"]:
+    """scrape_query is kept from the first sighting that had one."""
+    row = conn.execute(UPSERT_LISTING, _listing_params(listing, scrape_query)).fetchone()
     return "added" if row["added"] else "updated"
 
 
@@ -238,11 +241,11 @@ def get_garment(conn: Connection, garment_id: str) -> Garment | None:
 
 def save_garment_tags(conn: Connection, garment_id: str, tags: ItemTags, pattern_spec: PatternSpec | None, best_photo_id: int | None) -> None:
     conn.execute(
-        "UPDATE garments SET tags = %s::jsonb, pattern_spec = %s::jsonb, slot = %s, category = %s, size_norm = %s, usable_3d = %s, "
-        "best_photo_id = %s, tagged_at = now() WHERE id = %s",
+        "UPDATE garments SET tags = %s::jsonb, pattern_spec = %s::jsonb, slot = %s, category = %s, material = %s, size_norm = %s, "
+        "usable_3d = %s, best_photo_id = %s, tagged_at = now() WHERE id = %s",
         (
             tags.model_dump_json(), pattern_spec.model_dump_json() if pattern_spec else None, tags.slot.value, tags.category.value,
-            tags.size_normalized, tags.usable_for_3d, best_photo_id, garment_id,
+            normalize_material(tags.material), tags.size_normalized, tags.usable_for_3d, best_photo_id, garment_id,
         ),
     )
 

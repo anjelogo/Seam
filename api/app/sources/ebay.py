@@ -5,7 +5,7 @@ from typing import Optional
 
 from seam_shared.models import Condition, ImageRef, Listing, Money, Slot, Source
 
-from app.sources import SLOT_WORD
+from app.sources import search_text
 from app.sources.fetch import api_aclient
 
 CLOTHING_CATEGORY = "11450"
@@ -35,7 +35,7 @@ async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) ->
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={"Authorization": f"Bearer {await _auth()}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
         params={
-            "q": f"{query} {SLOT_WORD[slot]}" if slot else query,
+            "q": search_text(query, slot, page),
             "category_ids": CLOTHING_CATEGORY,
             "filter": "conditions:{USED},buyingOptions:{FIXED_PRICE}",
             "limit": limit,

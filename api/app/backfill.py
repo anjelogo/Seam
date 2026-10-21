@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from psycopg import Connection
+from psycopg.types.json import Jsonb
 from seam_shared import db
-from seam_shared.models import Asset3D, ImageView, ItemTags
+from seam_shared.models import Asset3D, ImageView, ItemTags, normalize_material
 
 from app import dedup
 from app.dedup import Pair, PhotoMeta
@@ -52,6 +53,9 @@ class Stats:
     photos_rotated: int = 0
     garments_created: int = 0
     garments_total: int = 0
+    materials_updated: int = 0
+    material_before: Counter = field(default_factory=Counter)
+    material_after: Counter = field(default_factory=Counter)
     merges: Counter = field(default_factory=Counter)
     stock_pairs: int = 0
     vetoed: Counter = field(default_factory=Counter)
@@ -179,6 +183,25 @@ def _flush_stamps(conn: Connection, stamps: list[tuple], tagged: list[tuple], dr
     stamps.clear()
     tagged.clear()
     _commit(conn, dry)
+
+
+def materials(conn: Connection, st: Stats, dry: bool) -> None:
+    rows = conn.execute("SELECT id, tags->>'material' AS raw, material FROM garments WHERE tags IS NOT NULL ORDER BY id").fetchall()
+    updates: list[tuple] = []
+    for r in rows:
+        norm = normalize_material(r["raw"])
+        st.material_before[r["raw"] or "(none)"] += 1
+        st.material_after[norm or "(none)"] += 1
+        if r["raw"] != norm or r["material"] != norm:
+            updates.append((Jsonb(norm), norm, r["id"]))
+    st.materials_updated = len(updates)
+    # direct SQL, not save_garment_tags: that would move tagged_at
+    with conn.cursor() as cur:
+        cur.executemany(
+            "UPDATE garments SET tags = jsonb_set(tags, '{material}', %s), material = %s WHERE id = %s", updates
+        )
+    _commit(conn, dry)
+    log.info("materials: tagged=%d updated=%d", len(rows), len(updates))
 
 
 def _link_file(src: Path, dst: Path, st: Stats, dry: bool) -> None:
@@ -362,6 +385,13 @@ def _counts(label: str, counter: Counter) -> str:
     return f"{label}: total={sum(counter.values())}{' ' + parts if parts else ''}"
 
 
+def _hist(label: str, counter: Counter, top: int | None = None) -> str:
+    items = counter.most_common(top) if top else sorted(counter.items())
+    parts = " ".join(f"{k}={v}" for k, v in items)
+    rest = len(counter) - len(items)
+    return f"{label}: total={sum(counter.values())}{' ' + parts if parts else ''}" + (f" ... {rest} more distinct" if rest else "")
+
+
 def report(st: Stats, dry: bool) -> None:
     head = "DRY RUN" if dry else "BACKFILL"
     lines = [
@@ -369,6 +399,9 @@ def report(st: Stats, dry: bool) -> None:
         f"photos: new={st.photos_new} existing={st.photos_existing} missing_files={st.photos_missing} "
         f"failed={st.photos_failed} exif_rewritten={st.photos_rotated}",
         f"garments: created={st.garments_created} total={st.garments_total}",
+        f"materials: updated={st.materials_updated}",
+        _hist("materials before", st.material_before, 25),
+        _hist("materials after", st.material_after),
         _counts("merges", st.merges),
         f"stock_photo pairs: {st.stock_pairs}",
         _counts("vetoed pairs", st.vetoed),
@@ -389,6 +422,7 @@ def run(conn: Connection, st: Stats, limit: int | None, dry: bool) -> None:
     columns(conn, st, dry)
     photos(conn, st, ids, dry)
     garments(conn, st, ids, dry)
+    materials(conn, st, dry)
     assets(conn, st, dry)
     linking(conn, st, ids, dry)
     recutout(conn, st, dry)

@@ -4,7 +4,7 @@ from typing import Optional
 
 from seam_shared.models import Condition, ImageRef, Listing, Money, Slot, Source
 
-from app.sources import SLOT_WORD
+from app.sources import search_text
 from app.sources.fetch import fetch
 
 CONDITION = {
@@ -19,7 +19,7 @@ async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) ->
     # shortcut: first results page only (~48 listings), add max_id paging if seeding needs more
     if page:
         return []
-    q = f"{query} {SLOT_WORD[slot]}" if slot else query
+    q = search_text(query, slot, page)
     params = {"query": q, "type": "listings", "availability": "available"}
     html = await fetch("https://poshmark.com/search", source=Source.poshmark, params=params)
     html.raise_for_status()

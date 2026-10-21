@@ -78,10 +78,13 @@ if __name__ == "__main__":
     p.add_argument("command", nargs="?", choices=["enqueue-all", "status"])
     p.add_argument("--queues", default="scrape,default,cv")
     p.add_argument("--once", action="store_true", help="exit once the queues are drained")
+    p.add_argument("--dry", action="store_true", help="with enqueue-all: print the scrape plan, enqueue nothing")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.command == "status":
         status()
+    elif args.command == "enqueue-all" and args.dry:
+        asyncio.run(tasks.scrape_all(dry=True))
     else:
         asyncio.run(main(args))

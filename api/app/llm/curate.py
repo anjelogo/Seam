@@ -1,15 +1,18 @@
 import json
+import math
 import os
+import random
 import re
 import secrets
 import time
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 import anthropic
 from pydantic import BaseModel
 from seam_shared import db
-from seam_shared.models import BodyProfile, Garment, ListingStatus, Money, Outfit, OutfitPiece, OutfitResponseV3, Slot, StyleQuery
+from seam_shared.models import BodyProfile, Garment, ListingStatus, Money, Outfit, OutfitPiece, OutfitResponseV3, Slot, StyleQuery, normalize_material
 
 from app.cv import sizes
 
@@ -47,9 +50,34 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _asked_for(value: str, asked: set[str]) -> bool:
+    return all(w in asked for w in value.split("_"))
+
+
+def _balance(ranked: list[Garment], want: set[str]) -> list[Garment]:
+    """Cap any one material or category at a third of the pool, unless the request named it."""
+    limit = math.ceil(PER_SLOT / 3)
+    asked = want | {w[:-2] for w in want if w.endswith("es")} | {w[:-1] for w in want if w.endswith("s")}
+    seen: dict[tuple[str, str], int] = {}
+    pool, skipped = [], []
+    for g in ranked:
+        if len(pool) >= PER_SLOT:
+            break
+        keys = [("material", normalize_material(g.tags.material)), ("category", g.tags.category.value)]
+        keys = [k for k in keys if k[1] and not _asked_for(k[1], asked)]
+        if any(seen.get(k, 0) >= limit for k in keys):
+            skipped.append(g)
+            continue
+        for k in keys:
+            seen[k] = seen.get(k, 0) + 1
+        pool.append(g)
+    return pool + skipped[: max(0, PER_SLOT - len(pool))]
+
+
 def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str, include_unusable: bool) -> dict[Slot, list[Garment]]:
-    """Per requested slot, the PER_SLOT best garments: size match first, then prompt overlap, then cheapest."""
+    """Per requested slot, PER_SLOT garments: size match first, then prompt overlap, then a per-prompt-per-day shuffle, capped for variety."""
     want = _words(text)
+    day = datetime.now(timezone.utc).date().isoformat()
     wanted = {Slot.top: query.sizes.top, Slot.outer: query.sizes.top, Slot.onepiece: query.sizes.top,
               Slot.bottom: query.sizes.bottom, Slot.shoes: query.sizes.shoes}
     pools = {}
@@ -57,15 +85,19 @@ def _candidates(conn, query: StyleQuery, cap: Optional[int], text: str, include_
         size = sizes.ladder(slot, wanted.get(slot))
         hits, _ = db.get_garments(conn, slot=slot, sources=query.sources or None, max_cents=cap, require_3d_ready=query.require_3d_ready,
                                   usable_3d=None if include_unusable else True, limit=None)
+        # draw in id order so DB row order never changes the pool
+        tagged = sorted([g for g in hits if g.tags], key=lambda g: g.id)
+        rng = random.Random(f"{query.prompt}|{day}")
+        jitter = {g.id: rng.random() for g in tagged}
 
         # shortcut: size match ranks first instead of filtering so a thin slot still fills; filter hard once inventory is a few hundred per slot
         def rank(g: Garment):
             t = g.tags
             titles = [o.title for o in g.listings if o.status == ListingStatus.active]
             hay = _words(" ".join([*titles, t.category.value, t.era or "", t.pattern or "", t.material or "", *t.style_tags, *(c.name for c in t.colors)]))
-            return bool(size) and t.size_normalized == size, len(want & hay), -cost(g)
+            return bool(size) and t.size_normalized == size, len(want & hay), jitter[g.id]
 
-        pools[slot] = sorted([g for g in hits if g.tags], key=rank, reverse=True)[:PER_SLOT]
+        pools[slot] = _balance(sorted(tagged, key=rank, reverse=True), want)
     return pools
 
 
@@ -76,7 +108,8 @@ def _body(body: BodyProfile) -> str:
 
 def _prompt(query: StyleQuery, pools: dict[Slot, list[Garment]], cap: Optional[int], previous: list[Outfit], by_id: dict, short: dict[str, str]) -> str:
     rows = [
-        json.dumps({"id": short[g.id], "slot": s.value, "category": g.tags.category.value, "colors": [c.name for c in g.tags.colors],
+        json.dumps({"id": short[g.id], "slot": s.value, "category": g.tags.category.value, "material": normalize_material(g.tags.material),
+                    "colors": [c.name for c in g.tags.colors],
                     "style_tags": g.tags.style_tags, "era": g.tags.era, "fit": g.tags.fit.value, "price_usd": cost(g) / 100,
                     "title": g.best_listing().title[:90]})
         for s, garments in pools.items() for g in garments
@@ -102,13 +135,15 @@ def _prompt(query: StyleQuery, pools: dict[Slot, list[Garment]], cap: Optional[i
         "- alternates: 2-4 other candidate ids from the same slot that would also work",
         "- name: a short evocative outfit name; vibe_summary: one sentence, 25 words max",
         "- vary the items across outfits",
+        "- across the outfits, use a different outer category or material in each unless the style prompt asks for one",
+        "- do not default to leather; pick it only when the prompt or feedback points to it",
         "Candidates (one JSON per line):",
         *rows,
     ]
     return "\n".join(lines)
 
 
-def _repair(look: Look, pools: dict[Slot, list[Garment]], cap: Optional[int], by_id: dict[str, Garment]) -> Outfit:
+def _repair(look: Look, pools: dict[Slot, list[Garment]], cap: Optional[int], by_id: dict[str, Garment], taken: set[str]) -> Outfit:
     """Never trust the LLM: drop invalid picks, fill gaps, enforce onepiece and budget, recompute totals."""
     slot_of = {g.id: s for s, garments in pools.items() for g in garments}
     picks = {p.slot: p for p in look.pieces if slot_of.get(p.item_id) == p.slot}
@@ -118,7 +153,8 @@ def _repair(look: Look, pools: dict[Slot, list[Garment]], cap: Optional[int], by
     for s in pools:
         skip = s == Slot.onepiece or (Slot.onepiece in picks and s in (Slot.top, Slot.bottom))
         if s not in picks and not skip and pools[s]:
-            picks[s] = Pick(slot=s, item_id=pools[s][0].id, reason="Closest match left in this slot.", alternates=[])
+            fill = next((g for g in pools[s] if g.id not in taken), pools[s][0])
+            picks[s] = Pick(slot=s, item_id=fill.id, reason="Closest match left in this slot.", alternates=[])
 
     def cheaper(s: Slot) -> Garment:
         """The LLM's cheapest alternate if it saves money (keeps the vibe), else the slot's cheapest garment."""
@@ -137,6 +173,7 @@ def _repair(look: Look, pools: dict[Slot, list[Garment]], cap: Optional[int], by
         alts = [a for a in dict.fromkeys(p.alternates) if a != p.item_id and slot_of.get(a) == s][:4]
         alts += [g.id for g in pools[s] if g.id != p.item_id and g.id not in alts][: max(0, 2 - len(alts))]
         pieces[s] = OutfitPiece(item_id=p.item_id, reason=p.reason, alternates=alts)
+    taken.update(p.item_id for p in pieces.values())
     chosen = [by_id[p.item_id] for p in pieces.values()]
     total = sum(map(cost, chosen))
     saved = sum(max(g.tags.est_retail.cents - g.best_listing().price.cents, 0) for g in chosen if g.tags.est_retail)
@@ -182,7 +219,8 @@ def build(query: StyleQuery, user_id: UUID | None = None, include_unusable: bool
     looks = _ask(_prompt(query, pools, cap, previous, by_id, short))
     for p in (p for look in looks.outfits for p in look.pieces):
         p.item_id, p.alternates = real.get(p.item_id, p.item_id), [real.get(a, a) for a in p.alternates]
-    outfits = [_repair(look, pools, cap, by_id) for look in looks.outfits[: query.num_outfits]]
+    taken: set[str] = set()
+    outfits = [_repair(look, pools, cap, by_id, taken) for look in looks.outfits[: query.num_outfits]]
     with db.pool().connection() as conn:
         db.save_outfits(conn, outfits, user_id)
     used = {i for o in outfits for p in o.pieces.values() for i in (p.item_id, *p.alternates)}

@@ -3,6 +3,7 @@ from typing import Optional
 
 from seam_shared.models import Condition, ImageRef, Listing, Money, Slot, Source
 
+from app.sources import search_text
 from app.sources.fetch import fetch
 
 # public search-only key served to every visitor in grailed.com's PUBLIC_CONFIG
@@ -27,8 +28,9 @@ CONDITION = {
 
 
 async def search(query: str, slot: Optional[Slot], limit: int, page: int = 0) -> list[Listing]:
-    body = {"query": query, "hitsPerPage": limit, "page": page}
+    body = {"query": search_text(query, slot, page), "hitsPerPage": limit, "page": page}
     if slot:
+        # the facets pin the slot, the term spreads results within it
         body["facetFilters"] = [[f"category:{c}" for c in CATEGORIES[slot]]]
     r = await fetch(ALGOLIA, source=Source.grailed, method="POST", headers=ALGOLIA_HEADERS, json=body)
     r.raise_for_status()

@@ -164,7 +164,7 @@ class ItemTags(BaseModel):
     category: Category
     colors: list[Color] = []
     pattern: Optional[str] = None     # "solid", "plaid", "graphic", "striped"
-    material: Optional[str] = None    # "denim", "leather", "cotton jersey"
+    material: Optional[str] = None    # one of MATERIALS
     fit: Fit = Fit.unknown
     style_tags: list[str] = []        # lowercase: ["grunge", "y2k", "emo"]
     era: Optional[str] = None         # "2000s", "90s"
@@ -441,6 +441,30 @@ class OutfitResponseV3(BaseModel):
     outfits: list[Outfit]                                      # OutfitPiece.item_id holds a garment id in v3
     garments: dict[str, Garment]
     took_ms: int = 0
+
+# ───────────────────────── material vocabulary ─────────────────────────
+# ItemTags.material stays Optional[str], but the tagger may only write one of these.
+MATERIALS = (
+    "cotton_jersey", "cotton_twill", "denim", "corduroy", "canvas", "fleece", "knit", "wool", "flannel",
+    "linen", "silk_satin", "nylon", "polyester", "leather", "faux_leather", "suede", "rubber", "mesh", "other",
+)
+_MATERIAL_ALIASES = {
+    "pleather": "faux_leather", "vegan leather": "faux_leather", "pu": "faux_leather", "faux leather": "faux_leather",
+    "jersey": "cotton_jersey", "cotton": "cotton_jersey", "twill": "cotton_twill", "chino": "cotton_twill",
+    "sweater": "knit", "cashmere": "knit", "acrylic": "knit", "rib": "knit", "sherpa": "fleece",
+    "satin": "silk_satin", "silk": "silk_satin", "nubuck": "suede", "leather": "leather",
+}
+
+def normalize_material(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    s = raw.strip().lower().replace("-", " ")
+    if s.replace(" ", "_") in MATERIALS:
+        return s.replace(" ", "_")
+    for alias, m in sorted(_MATERIAL_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        if alias in s:
+            return m
+    return "other"
 
 Item.model_rebuild()
 StyleQuery.model_rebuild()

@@ -9,6 +9,7 @@ from PIL import Image, ImageOps
 from perceptron import Client, image, json_schema_format
 from pydantic import BaseModel, Field
 from seam_shared.models import (
+    MATERIALS,
     Category,
     Color,
     Condition,
@@ -25,6 +26,7 @@ from seam_shared.models import (
     StripeSet,
     Trim,
     Wrinkle,
+    normalize_material,
 )
 
 from app.cv import sizes
@@ -127,11 +129,13 @@ Return JSON matching the schema, with exactly one `photos` entry per photo, in o
 - photos[].wrinkle: {", ".join(w.value for w in Wrinkle)}
 - slot: {", ".join(s.value for s in Slot)} (onepiece = dress/jumpsuit, outer = layered over a top)
 - category: {", ".join(c.value for c in Category)}
+- material: {", ".join(MATERIALS)}
 - fit: {", ".join(f.value for f in Fit)}
 - pattern_spec.kind: {", ".join(k.value for k in PatternKind)}
 
 Rules:
 - slot/category: trust the title when it names the garment. Sleeveless tops are tank (slot top); vest is only an outer layer (puffer, denim, suit vest).
+- material: exactly one value from the list. faux_leather for PU, vegan leather or pleather; leather only when the title says leather or the grain is clearly hide. category leather_jacket only when material is leather or faux_leather, otherwise jacket.
 - best_view_index: the photo we turn into 3D. It MUST have state spread and wrinkle other than high. Prefer flat_lay > hanger > mannequin > on_model. Never pick a detail shot.
 - garment_box: box around the garment in the best photo AS IF that photo were rotated by its rotation, integers on a 0-1000 grid, ordered {box_order}.
 - colors: 1-3 dominant garment colors, name like "washed black", hex like "#2b2b2b", ratio = share of garment area.
@@ -204,14 +208,17 @@ def _parse(text: str) -> TagOut:
 def _tagged(garment: Garment, out: TagOut, tagger: str, order: str) -> Tagged:
     best = out.photos[out.best_view_index]
     tags = ItemTags(
-        **out.model_dump(include={"slot", "category", "colors", "pattern", "material", "fit", "style_tags", "era",
+        **out.model_dump(include={"slot", "category", "colors", "pattern", "fit", "style_tags", "era",
                                   "confidence", "usable_for_3d", "unusable_reason"}),
+        material=normalize_material(out.material),
         best_view_index=out.best_view_index,
         est_retail=Money(cents=out.est_retail_usd * 100) if out.est_retail_usd and out.est_retail_usd > 0 else None,
         tagger=tagger,
         size_normalized=sizes.ladder(out.slot, out.size_normalized, garment.best_listing().size_raw),
         garment_box=unit_box(out.garment_box, order),
     )
+    if tags.category == Category.leather_jacket and tags.material not in ("leather", "faux_leather"):
+        tags.category = Category.jacket
     if not qualifies(best):
         tags.usable_for_3d = False
         tags.unusable_reason = "folded" if best.state != PhotoState.spread else "wrinkled"

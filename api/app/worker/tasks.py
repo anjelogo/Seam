@@ -3,6 +3,7 @@ import logging
 import mimetypes
 import multiprocessing
 import os
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
@@ -14,7 +15,7 @@ from seam_shared.models import ImageRef, Listing, ListingStatus, Slot, Source
 from app import dedup
 from app.dedup import PhotoMeta
 from app.settings import DATA_DIR
-from app.sources import ADAPTERS
+from app.sources import ADAPTERS, search_text, slot_term
 from app.sources.fetch import BlockedError, fetch_bytes
 from app.worker import app
 
@@ -56,9 +57,9 @@ def _hashed(listing_id: str) -> set[int]:
         return db.photo_idxs(conn, listing_id)
 
 
-def _save_listing(listing: Listing, listing_id: str, slot: Slot, cached: list[tuple[ImageRef, PhotoMeta | None]]):
+def _save_listing(listing: Listing, listing_id: str, slot: Slot, cached: list[tuple[ImageRef, PhotoMeta | None]], query: str):
     with db.pool().connection() as conn:
-        result = db.upsert_listing(conn, listing.model_copy(update={"images": [ref for ref, _ in cached]}))
+        result = db.upsert_listing(conn, listing.model_copy(update={"images": [ref for ref, _ in cached]}), scrape_query=query)
         for i, (_, meta) in enumerate(cached):
             if meta:
                 db.upsert_photo(
@@ -93,7 +94,7 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
                 last_error = f"images {listing.source_id}: {e!r}"
                 log.warning("%s %s", source, last_error)
                 continue
-            result, garment_id = await asyncio.to_thread(_save_listing, listing, listing_id, Slot(slot), list(cached))
+            result, garment_id = await asyncio.to_thread(_save_listing, listing, listing_id, Slot(slot), list(cached), query)
             if result == "added":
                 added += 1
             else:
@@ -159,23 +160,57 @@ async def tag(garment_id: str | None = None, item_id: str | None = None, retag: 
         log.warning("tag %s: not tagged", garment_id)
 
 
+def _plan(entries: list[str]) -> list[tuple[str, Slot]]:
+    plan: list[tuple[str, Slot]] = []
+    for entry in entries:
+        query, _, scope = (p.strip() for p in entry.partition("@"))
+        if not query:
+            log.warning("scrape_all: %r has no query, skipped", entry)
+            continue
+        slots = SEED_SLOTS
+        if scope:
+            try:
+                slots = [Slot(scope)]
+            except ValueError:
+                log.warning("scrape_all: %r is not a slot, running %r unscoped", scope, query)
+        plan += [(query, slot) for slot in slots if (query, slot) not in plan]
+    return plan
+
+
+def _log_plan(plan: list[tuple[str, Slot]], pages: int):
+    spread: dict[Slot, Counter] = {}
+    jobs = 0
+    for query, slot in plan:
+        for page in range(pages):
+            spread.setdefault(slot, Counter())[slot_term(slot, query, page) or "-"] += 1
+            for source in ADAPTERS:
+                log.info("plan %s %r %s p%d: %r", source.value, query, slot.value, page, search_text(query, slot, page))
+                jobs += 1
+    for slot, terms in spread.items():
+        log.info("plan terms %s: %s", slot.value, " ".join(f"{t}={n}" for t, n in sorted(terms.items())))
+    log.info("scrape_all: dry, %d scrape jobs planned", jobs)
+
+
 @app.periodic(cron=os.getenv("SCRAPE_CRON") or "0 9 * * *")
 @app.task(queue="default")
-async def scrape_all(timestamp: int = 0):
-    queries = [q.strip() for q in (os.getenv("SCRAPE_QUERIES") or "vintage").split(",") if q.strip()]
+async def scrape_all(timestamp: int = 0, dry: bool = False):
+    entries = [q.strip() for q in (os.getenv("SCRAPE_QUERIES") or "vintage").split(",") if q.strip()]
     pages = int(os.getenv("SCRAPE_PAGES") or 1)
+    plan = _plan(entries)
+    if dry:
+        _log_plan(plan, pages)
+        return
     deferred = 0
     # source innermost: jobs run in queue order, so this keeps every source busy at once
-    for query in queries:
-        for slot in SEED_SLOTS:
-            for page in range(pages):
-                for source in ADAPTERS:
-                    lock = f"{source.value}:{query}:{slot.value}:{page}"
-                    try:
-                        await scrape.configure(queueing_lock=lock).defer_async(source=source.value, query=query, slot=slot.value, page=page)
-                        deferred += 1
-                    except AlreadyEnqueued:
-                        pass
+    for query, slot in plan:
+        for page in range(pages):
+            for source in ADAPTERS:
+                lock = f"{source.value}:{query}:{slot.value}:{page}"
+                try:
+                    await scrape.configure(queueing_lock=lock).defer_async(source=source.value, query=query, slot=slot.value, page=page)
+                    deferred += 1
+                except AlreadyEnqueued:
+                    pass
     log.info("scrape_all: deferred %d scrape jobs", deferred)
 
 
