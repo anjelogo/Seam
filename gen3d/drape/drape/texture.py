@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+from scipy.ndimage import gaussian_filter
 
 from drape._repo import DRAPE, bootstrap
 
@@ -24,12 +25,21 @@ BACK_BLUR = 24 / 1024
 BACK_MIX = 0.7
 FILL_PX = 3
 MIN_PERIOD_PX = 3.0
+WAVE_FADE_PX = (2.0, 3.5)  # a wave fades out between these pixel periods
+GRAIN_SIGMA_PX = 0.8  # noise below this blur radius would alias instead of reading as grain
+TWILL_SETS = ((0.34, 0.0, 1.0), (0.16, 0.5, 0.55))  # duty, offset in periods, weight
+TWILL_HARMONICS = 4
+TWILL_AMP = 0.10
+DENIM_GRAIN = (0.09, 0.013, 3)  # fibre noise: cm, height std, diagonal smear taps
+DENIM_SLUB = (0.30, 0.004)  # weave irregularity: cm, height std; louder than this reads as crumple once minified
+JERSEY_AMP = 0.055
+JERSEY_GRAIN = (0.12, 0.030)  # cm, height std
 
 # roughness, normal strength, pattern period in cm
 FABRIC = {
-    "jersey": {"rough": 0.85, "strength": 1.8, "period": 0.15},
+    "jersey": {"rough": 0.85, "strength": 0.9, "period": 0.10},
     "rib": {"rough": 0.85, "strength": 4.0, "period": 0.5},
-    "denim": {"rough": 0.90, "strength": 3.0, "period": 0.3},
+    "denim": {"rough": 0.90, "strength": 2.4, "period": 0.10},
     "canvas": {"rough": 0.88, "strength": 2.5, "period": 0.2},
     "leather": {"rough": 0.40, "strength": 1.5, "period": 0.8},
 }
@@ -332,18 +342,67 @@ def noise(size: int) -> np.ndarray:
     return np.random.default_rng(SEED).random((size, size), dtype=np.float32)
 
 
+def band_fade(period_px: float) -> float:
+    """A wave shorter than two texels can only alias, so fade it out instead of drawing it."""
+    lo, hi = WAVE_FADE_PX
+    t = min(max((period_px - lo) / (hi - lo), 0.0), 1.0)
+    return float(t * t * (3 - 2 * t))
+
+
+def tile_cycles(period_px: float, size: int, diagonal: bool) -> tuple[float, float]:
+    """Frequency snapped to a whole number of cycles per tile, so the field has no seam when tiled."""
+    axis = math.sqrt(2.0) if diagonal else 1.0
+    n = max(round(size / (period_px * axis)), 1)
+    return n / size, size / (n * axis)
+
+
+def grain(white: np.ndarray, period_px: float, std: float, smear_taps: int = 0) -> np.ndarray:
+    """Noise low-passed to its own scale, so it reads as fibre sheen rather than per-texel bumps."""
+    g = gaussian_filter(white - 0.5, max(period_px / 2.0, GRAIN_SIGMA_PX), mode="wrap")
+    half = smear_taps // 2
+    if half:
+        # averaged along the wale line, which is what tilts the grain with the weave
+        acc = np.zeros_like(g)
+        for k in range(-half, half + 1):
+            acc += np.roll(g, (-k, k), (0, 1))
+        g = acc / (2 * half + 1)
+    sd = float(g.std())
+    return (g * (std / sd)).astype(np.float32) if sd > 1e-9 else g.astype(np.float32)
+
+
+def twill(x: np.ndarray, y: np.ndarray, period_px: float, size: int) -> tuple[np.ndarray, float]:
+    """Two offset diagonal wale sets as square waves, each harmonic faded out once it goes sub-pixel."""
+    f, realized = tile_cycles(period_px, size, True)
+    phase = (f * (x + y)).astype(np.float32)
+    probe = np.linspace(0, 1, 1024, dtype=np.float64)
+    h, ref = np.zeros_like(phase), np.zeros_like(probe)
+    for duty, off, weight in TWILL_SETS:
+        for k in range(1, TWILL_HARMONICS + 1):
+            amp = weight * 2.0 / (k * math.pi) * math.sin(k * math.pi * duty)
+            ref += amp * np.cos(2 * math.pi * k * (probe - off))
+            fade = band_fade(realized / k)
+            if fade > 0:
+                h += np.float32(amp * fade) * np.cos(2 * np.pi * k * (phase - off))
+    peak = float(np.abs(ref).max())
+    return (h / peak if peak > 1e-9 else h), realized
+
+
 def height_field(fabric: str, px_per_cm: float, size: int, white: np.ndarray) -> np.ndarray:
-    period = max(FABRIC[fabric]["period"] * px_per_cm, MIN_PERIOD_PX)
+    raw = FABRIC[fabric]["period"] * px_per_cm
+    period = max(raw, MIN_PERIOD_PX)
     y, x = np.mgrid[0:size, 0:size].astype(np.float32)
     if fabric == "jersey":
-        h = 0.5 + 0.30 * (white - 0.5) + 0.10 * np.sin(2 * np.pi * x / period)
+        f, realized = tile_cycles(raw, size, False)
+        loop = band_fade(realized) * np.cos(2 * np.pi * f * x)
+        h = 0.5 + JERSEY_AMP * loop + grain(white, JERSEY_GRAIN[0] * px_per_cm, JERSEY_GRAIN[1])
     elif fabric == "rib":
         h = 0.5 + 0.45 * np.sin(2 * np.pi * x / period) + 0.05 * (white - 0.5)
     elif fabric == "denim":
-        a = math.radians(63.0)
-        t = x * math.cos(a) + y * math.sin(a)
-        line = (t % period) < min(3.0, period * 0.5)
-        h = np.where(line, 0.72, 0.38).astype(np.float32) + 0.08 * (white - 0.5)
+        wale, _ = twill(x, y, raw, size)
+        slub = np.roll(white, (size // 3, size // 7), (0, 1))
+        h = (0.5 + TWILL_AMP * wale
+             + grain(white, DENIM_GRAIN[0] * px_per_cm, DENIM_GRAIN[1], DENIM_GRAIN[2])
+             + grain(slub, DENIM_SLUB[0] * px_per_cm, DENIM_SLUB[1]))
     elif fabric == "canvas":
         h = 0.5 + 0.20 * np.sin(2 * np.pi * x / period) + 0.20 * np.sin(2 * np.pi * y / period)
     else:
