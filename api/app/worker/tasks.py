@@ -9,8 +9,10 @@ from concurrent.futures.process import BrokenProcessPool
 from procrastinate import RetryStrategy
 from procrastinate.exceptions import AlreadyEnqueued
 from seam_shared import db
-from seam_shared.models import ImageRef, Listing, Slot, Source
+from seam_shared.models import ImageRef, Listing, ListingStatus, Slot, Source
 
+from app import dedup
+from app.dedup import PhotoMeta
 from app.settings import DATA_DIR
 from app.sources import ADAPTERS
 from app.sources.fetch import BlockedError, fetch_bytes
@@ -28,17 +30,43 @@ MAX_PHOTOS = 4
 NO_RETRY = (BlockedError, RuntimeError)
 
 
-async def cache_image(listing: Listing, i: int, img: ImageRef) -> ImageRef:
+async def cache_image(listing: Listing, i: int, img: ImageRef, hashed: set[int]) -> tuple[ImageRef, PhotoMeta | None]:
     folder = DATA_DIR / "raw" / listing.source.value
     folder.mkdir(parents=True, exist_ok=True)
     stem = f"{listing.source_id}_{i}"
-    path = next(folder.glob(f"{stem}.*"), None)
+    path = next((p for p in folder.glob(f"{stem}.*") if p.suffix != ".tmp"), None)
     if path is None:
         content, ctype = await fetch_bytes(img.url, source=listing.source)
         ext = mimetypes.guess_extension(ctype.split(";")[0].strip()) or ".jpg"
         path = folder / f"{stem}{ext}"
-        path.write_bytes(content)
-    return img.model_copy(update={"url": f"/static/raw/{listing.source.value}/{path.name}", "local_path": str(path)})
+        meta = await asyncio.to_thread(dedup.store_photo, path, content)
+    elif i not in hashed:
+        meta = await asyncio.to_thread(dedup.store_photo, path)
+    else:
+        meta = None
+    url = f"/static/{meta.path}" if meta else f"/static/raw/{listing.source.value}/{path.name}"
+    update = {"url": url, "local_path": str(path)}
+    if meta:
+        update |= {"width": meta.width, "height": meta.height}
+    return img.model_copy(update=update), meta
+
+
+def _hashed(listing_id: str) -> set[int]:
+    with db.pool().connection() as conn:
+        return db.photo_idxs(conn, listing_id)
+
+
+def _save_listing(listing: Listing, listing_id: str, slot: Slot, cached: list[tuple[ImageRef, PhotoMeta | None]]):
+    with db.pool().connection() as conn:
+        result = db.upsert_listing(conn, listing.model_copy(update={"images": [ref for ref, _ in cached]}))
+        for i, (_, meta) in enumerate(cached):
+            if meta:
+                db.upsert_photo(
+                    conn, listing_id, i, path=meta.path, width=meta.width, height=meta.height, phash=meta.phash,
+                    exif_rotated=meta.exif_rotated,
+                )
+        garment_id = None if db.garment_for_listing(conn, listing_id) else dedup.link(conn, listing_id, slot)
+    return result, garment_id
 
 
 @app.task(queue="scrape", retry=RetryStrategy(max_attempts=2, exponential_wait=10))
@@ -52,8 +80,12 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
         listings = await ADAPTERS[src](query, Slot(slot), LIMITS.get(src, LIMIT), page)
         fetched = len(listings)
         for listing in listings:
+            listing_id = f"{src.value}:{listing.source_id}"
             try:
-                images = await asyncio.gather(*(cache_image(listing, i, img) for i, img in enumerate(listing.images[:MAX_PHOTOS])))
+                hashed = await asyncio.to_thread(_hashed, listing_id)
+                cached = await asyncio.gather(
+                    *(cache_image(listing, i, img, hashed) for i, img in enumerate(listing.images[:MAX_PHOTOS]))
+                )
             except BlockedError:
                 raise
             except Exception as e:
@@ -61,13 +93,16 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
                 last_error = f"images {listing.source_id}: {e!r}"
                 log.warning("%s %s", source, last_error)
                 continue
-            async with db.apool().connection() as conn:
-                result = await db.aupsert_listing(conn, listing.model_copy(update={"images": images}))
+            result, garment_id = await asyncio.to_thread(_save_listing, listing, listing_id, Slot(slot), list(cached))
             if result == "added":
                 added += 1
-                await tag.defer_async(item_id=f"{src.value}:{listing.source_id}")
             else:
                 updated += 1
+            if garment_id:
+                try:
+                    await tag.configure(queueing_lock=garment_id).defer_async(garment_id=garment_id)
+                except AlreadyEnqueued:
+                    pass
     except Exception as e:
         errors += 1
         last_error = repr(e)
@@ -83,19 +118,32 @@ async def scrape(source: str, query: str, slot: str, page: int = 0):
 _cv_pool: ProcessPoolExecutor | None = None
 
 
-def _tag_one(item_id: str) -> bool:
+def _tag_one(garment_id: str, retag: bool) -> bool:
     from app.cv.run import tag_one  # keeps cv deps out of the scrape worker
 
-    return tag_one(item_id)
+    return tag_one(garment_id, retag)
+
+
+def _resolve_garment(item_id: str) -> str | None:
+    with db.pool().connection() as conn:
+        garment_id = db.garment_for_listing(conn, item_id)
+        if garment_id is None and conn.execute("SELECT 1 FROM listings WHERE id = %s", (item_id,)).fetchone():
+            garment_id = dedup.link(conn, item_id)
+        return garment_id
 
 
 @app.task(queue="cv")
-async def tag(item_id: str):
+async def tag(garment_id: str | None = None, item_id: str | None = None, retag: bool = False):
     global _cv_pool
+    if garment_id is None and item_id:
+        garment_id = await asyncio.to_thread(_resolve_garment, item_id)
+    if garment_id is None:
+        log.info("tag %s: skipped, no garment", item_id)
+        return
     with db.pool().connection() as conn:
-        active = db.get_items(conn, ids=[item_id], limit=1)[1]
-    if not active:
-        log.info("tag %s: skipped, no longer active", item_id)
+        garment = db.get_garment(conn, garment_id)
+    if garment is None or not any(offer.status == ListingStatus.active for offer in garment.listings):
+        log.info("tag %s: skipped, no longer active", garment_id)
         return
     if _cv_pool is None:
         # one fresh process per job: onnxruntime holds a job's ~11 GB peak until its process exits
@@ -103,12 +151,12 @@ async def tag(item_id: str):
             int(os.getenv("CV_CONCURRENCY") or 1), mp_context=multiprocessing.get_context("spawn"), max_tasks_per_child=1
         )
     try:
-        ok = await asyncio.get_running_loop().run_in_executor(_cv_pool, _tag_one, item_id)
+        ok = await asyncio.get_running_loop().run_in_executor(_cv_pool, _tag_one, garment_id, retag)
     except BrokenProcessPool:
         _cv_pool = None  # a child died (OOM): this job fails, the next one gets a new pool
         raise
     if not ok:
-        log.warning("tag %s: not tagged", item_id)
+        log.warning("tag %s: not tagged", garment_id)
 
 
 @app.periodic(cron=os.getenv("SCRAPE_CRON") or "0 9 * * *")
