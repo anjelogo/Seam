@@ -1,11 +1,11 @@
 import io
 import threading
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from perceptron import Client, image
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from rembg import new_session, remove
-from seam_shared.models import Category, ImageRef, ImageView
+from seam_shared.models import Category, ImageRef, ImageView, PhotoState, Slot
 
 from app.settings import DATA_DIR
 
@@ -13,9 +13,19 @@ SIZE = 1024
 MAX_POINTS = 12
 # props behind or around the garment can be segmented away; anything else (bag, strap, belt, jewelry, layered clothing) covers fabric
 REMOVABLE = ("hanger", "mannequin", "body", "skin", "hair", "neck", "head", "stand", "background", "object")
+ROTATE = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180, 270: Image.Transpose.ROTATE_90}
+# a spread top or bottom has concave gaps (armpits, crotch); a folded one fills its hull. Skirts are convex spread, so they are skipped.
+FOLD_SOLIDITY = {Slot.top: 0.93, Slot.outer: 0.93, Slot.bottom: 0.95}
 _sessions = {}
 _lock = threading.Lock()
 _infer_lock = threading.Lock()
+
+
+class Cut(NamedTuple):
+    ref: ImageRef
+    problem: Optional[str]
+    boxes: list[tuple[float, float, float, float]]
+    solidity: Optional[float]
 
 
 def _session(name: str):
@@ -69,15 +79,67 @@ def _fill_holes(mask: Image.Image) -> Image.Image:
     return padded.point(lambda v: 0 if v == 128 else 255).crop((1, 1, mask.width + 1, mask.height + 1))
 
 
-def cutout(item_id: str, path: str, box: tuple[float, float, float, float], view: ImageView, category: Category) -> tuple[ImageRef, Optional[str]]:
-    """Crop to garment_box (+5% margin), keep only the garment, square-pad to 1024 RGBA.
-    Returns the cutout and an unusable_reason if anything besides the garment survived."""
+def _hull(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Monotone chain over x-sorted points."""
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) > 1 and (out[-1][0] - out[-2][0]) * (p[1] - out[-2][1]) <= (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0]):
+                out.pop()
+            out.append(p)
+        return out
+
+    return half(points)[:-1] + half(points[::-1])[:-1]
+
+
+def _solidity(mask: Image.Image) -> Optional[float]:
+    """Foreground area over the area of its convex hull: near 1.0 means the silhouette has no armpit or crotch gaps."""
+    flat = mask.point(lambda v: 255 if v > 127 else 0).tobytes()
+    area, points = 0, []
+    for y in range(mask.height):
+        row = flat[y * mask.width : (y + 1) * mask.width]
+        left = row.find(255)
+        if left < 0:
+            continue
+        area += row.count(255)
+        right = row.rfind(255) + 1
+        points += [(left, y), (left, y + 1), (right, y), (right, y + 1)]
+    hull = _hull(sorted(set(points)))
+    if not area or len(hull) < 3:
+        return None
+    full = abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(hull, hull[1:] + hull[:1]))) / 2
+    return area / full if full else None
+
+
+def _map_boxes(boxes, size: tuple[int, int], crop: tuple[int, ...], scale: float, bbox: tuple[int, ...],
+               side: int, dx: int, dy: int) -> list[tuple[float, float, float, float]]:
+    """Unit boxes in the upright photo -> unit boxes in the square cutout."""
+    w, h = size
+    out = []
+    for box in boxes:
+        x0, y0, x1, y1 = (min(max(v, 0.0), 1.0) for v in box)
+        xs = [(x * w - crop[0]) * scale - bbox[0] + dx for x in (x0, x1)]
+        ys = [(y * h - crop[1]) * scale - bbox[1] + dy for y in (y0, y1)]
+        out.append(tuple(min(max(v / side, 0.0), 1.0) for v in (xs[0], ys[0], xs[1], ys[1])))
+    return out
+
+
+def cutout(garment_id: str, path: str, box: tuple[float, float, float, float], view: ImageView, category: Category, slot: Slot,
+           rotation: int = 0, state: PhotoState = PhotoState.unknown, boxes=()) -> Cut:
+    """Rotate upright, crop to garment_box (+5% margin), keep only the garment, square-pad to 1024 RGBA.
+    Returns the cutout, an unusable_reason if anything besides the garment survived or the garment looks folded,
+    the given boxes mapped into the cutout and the silhouette solidity."""
     garment = category.value.replace("_", " ")
-    img = Image.open(path).convert("RGB")
+    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    if rotation:
+        img = img.transpose(ROTATE[rotation])
     w, h = img.size
     mx, my = (box[2] - box[0]) * 0.05, (box[3] - box[1]) * 0.05
-    img = img.crop((int(max(box[0] - mx, 0) * w), int(max(box[1] - my, 0) * h), int(min(box[2] + mx, 1) * w), int(min(box[3] + my, 1) * h)))
+    crop = (int(max(box[0] - mx, 0) * w), int(max(box[1] - my, 0) * h), int(min(box[2] + mx, 1) * w), int(min(box[3] + my, 1) * h))
+    img = img.crop(crop)
+    wide = max(img.width, 1)
     img.thumbnail((SIZE, SIZE))
+    scale = img.width / wide
 
     edges = _remove(img, session=_session("birefnet-general-lite")).getchannel("A")
     problem = None
@@ -98,17 +160,23 @@ def cutout(item_id: str, path: str, box: tuple[float, float, float, float], view
         elif not keep or fg(cleaned) < 0.75 * fg(edges):
             problem = "cutout_incomplete"
         edges = cleaned
+    solidity = _solidity(edges)
+    limit = FOLD_SOLIDITY.get(slot) if not (slot == Slot.bottom and category == Category.skirt) else None
+    if problem is None and state == PhotoState.spread and limit and solidity and solidity > limit:
+        problem = "folded"
     rgba = img.convert("RGBA")
     rgba.putalpha(edges)
-    rgba = rgba.crop(edges.getbbox() or (0, 0, *rgba.size))
+    bbox = edges.getbbox() or (0, 0, *rgba.size)
+    rgba = rgba.crop(bbox)
 
     side = int(max(rgba.size) * 1.08)
+    dx, dy = (side - rgba.width) // 2, (side - rgba.height) // 2
     square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-    square.paste(rgba, ((side - rgba.width) // 2, (side - rgba.height) // 2))
+    square.paste(rgba, (dx, dy))
     square = square.resize((SIZE, SIZE), Image.LANCZOS)
-    name = item_id.replace(":", "_") + ".png"
+    name = f"{garment_id}.png"
     out = DATA_DIR / "clean" / name
     out.parent.mkdir(parents=True, exist_ok=True)
     square.save(out)
     ref = ImageRef(url=f"/static/clean/{name}", local_path=str(out), width=SIZE, height=SIZE, view=view)
-    return ref, problem
+    return Cut(ref, problem, _map_boxes(boxes, (w, h), crop, scale, bbox, side, dx, dy), solidity)
