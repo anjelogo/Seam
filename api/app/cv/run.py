@@ -80,7 +80,10 @@ def _full(garment: Garment, result: tag.Tagged, photos: list[Photo]) -> tuple[It
         log.exception("cutout %s", garment.id)
         tags.usable_for_3d, tags.unusable_reason = False, tags.unusable_reason or "cutout_failed"
         boxes = []
-    return tags, _spec(result.pattern, boxes), photo.id
+    spec = _spec(result.pattern, boxes)
+    if spec is None and garment.pattern_spec:
+        spec = garment.pattern_spec.model_copy(update={"placements": []})
+    return tags, spec, photo.id
 
 
 def _join(garment: Garment, result: Optional[tag.Tagged], photos: list[Photo]) -> tuple[Optional[ItemTags], Optional[PatternSpec], Optional[int]]:
