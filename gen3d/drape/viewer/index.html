@@ -18,6 +18,9 @@
   #sliders { display: flex; gap: 8px; padding: 6px 12px; background: #1e2128; align-items: center; flex-wrap: wrap; }
   #sliders label { display: flex; gap: 4px; align-items: center; font-size: 11px; color: #9aa0ab; }
   input[type=range] { width: 70px; }
+  body.eval #bar, body.eval #sliders, body.eval #paneL, body.eval .label, body.eval .note { display: none; }
+  body.eval { background: transparent; }
+  body.eval #panes { height: 100vh; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -32,6 +35,7 @@
   <span id="items"></span>
   <span>| right pane:</span><span id="modes"></span>
   <span id="sizes"></span>
+  <span>| texture:</span><span id="texs"></span>
   <span style="margin-left:auto" id="status">loading manifest…</span>
 </div>
 <div id="sliders"></div>
@@ -44,17 +48,20 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-const ROOT = "/gen3d/drape/runs/out";
+const PARAMS = new URLSearchParams(location.search);
+const EVAL = PARAMS.has("eval");
+const ROOT = `/gen3d/drape/${PARAMS.get("out") || "runs/out"}`;
 const SLIDER_NAMES = ["height","weight","muscle","shoulders","chest","waist","hips","leg_length"];
 const loader = new GLTFLoader();
-const state = { item: null, mode: "draped", size: "fit", manifest: null, weights: Object.fromEntries(SLIDER_NAMES.map(n => [n, 0.5])) };
+const state = { item: null, mode: "draped", size: "fit", tex: "v2", manifest: null, weights: Object.fromEntries(SLIDER_NAMES.map(n => [n, 0.5])) };
+if (EVAL) document.body.classList.add("eval");
 
 function makePane(el) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x16181d);
+  scene.background = EVAL ? null : new THREE.Color(0x16181d);
   const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 50);
   camera.position.set(0.4, 1.45, 2.6);
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: EVAL });
   el.appendChild(renderer.domElement);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0.95, 0);
@@ -62,7 +69,7 @@ function makePane(el) {
   const dir = new THREE.DirectionalLight(0xffffff, 1.6);
   dir.position.set(2, 3, 2.5);
   scene.add(dir);
-  scene.add(new THREE.GridHelper(2, 10, 0x333a46, 0x262b34));
+  if (!EVAL) scene.add(new THREE.GridHelper(2, 10, 0x333a46, 0x262b34));
   const group = new THREE.Group();
   scene.add(group);
   function resize() {
@@ -107,9 +114,10 @@ async function setGarment(p, url, doubleSide = false) {
   } catch { note(p, `missing: ${url}`); }
 }
 function rightUrl(entry) {
-  if (state.mode === "bound") return entry.bound;
+  const legacy = state.tex === "legacy";
+  if (state.mode === "bound") return legacy ? entry.bound_legacy : entry.bound;
   if (state.size !== "fit") return (entry.sizes || {})[state.size];
-  return entry.draped;
+  return legacy ? entry.draped_legacy : entry.draped;
 }
 async function refresh() {
   const entry = state.manifest.items.find(i => i.safe === state.item);
@@ -154,14 +162,42 @@ async function main() {
   buttonRow(document.getElementById("modes"), ["draped", "bound"], () => state.mode, v => { state.mode = v; });
   const sz = ["fit", "XS", "M", "XL"];
   buttonRow(document.getElementById("sizes"), sz, () => state.size, v => { state.size = v; state.mode = "draped"; });
+  buttonRow(document.getElementById("texs"), ["v2", "legacy"], () => state.tex, v => { state.tex = v; });
   sliders();
-  await refresh();
+  if (EVAL) {
+    R.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 20);
+    R.controls.enabled = false;
+  } else {
+    await refresh();
+  }
   window.__poc = {
     state,
     items: state.manifest.items.map(i => i.safe),
-    async set(item, mode = "draped", size = "fit") {
-      state.item = item; state.mode = mode; state.size = size;
+    async set(item, mode = "draped", size = "fit", tex = "v2") {
+      state.item = item; state.mode = mode; state.size = size; state.tex = tex;
       await refresh();
+    },
+    // eval mode: orthographic, framed on the garment bbox so every variant and view lines up
+    async shot(item, tex = "v2", azDeg = 0, avatar = false) {
+      state.item = item; state.tex = tex; state.mode = "draped"; state.size = "fit";
+      const entry = state.manifest.items.find(i => i.safe === item);
+      const url = tex === "legacy" ? entry.draped_legacy : entry.draped;
+      if (avatar) await setAvatar(R);
+      if (R.avatar) R.avatar.visible = avatar;
+      await setGarment(R, url, true);
+      if (!R.garment) return { ok: false, url };
+      applyAll();
+      const box = new THREE.Box3().setFromObject(R.garment);
+      const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+      const aspect = R.el.clientWidth / R.el.clientHeight;
+      const half = 1.05 * Math.max(s.y / 2, Math.max(s.x, s.z) / 2 / aspect);
+      Object.assign(R.camera, { left: -half * aspect, right: half * aspect, top: half, bottom: -half });
+      R.camera.updateProjectionMatrix();
+      const az = azDeg * Math.PI / 180;
+      R.camera.position.set(c.x + 5 * Math.sin(az), c.y, c.z + 5 * Math.cos(az));
+      R.camera.lookAt(c);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { ok: true, url, box: [box.min.toArray(), box.max.toArray()] };
     },
     setView(azDeg, height = 1.0, radius = 2.8) {
       const az = azDeg * Math.PI / 180;

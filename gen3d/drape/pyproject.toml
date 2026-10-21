@@ -17,6 +17,9 @@ dependencies = [
     "pygarment",
 ]
 
+[project.optional-dependencies]
+eval = ["lpips", "torch", "torchvision", "playwright"]
+
 # PyPI pygarment 2.0.2 wheel is mispackaged; clone vendor/ before uv sync
 [tool.uv.sources]
 pygarment = { path = "vendor/GarmentCode", editable = true }

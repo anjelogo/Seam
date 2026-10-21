@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-21 00:25 · anjelo · gen3d drape texture v2
+- gen3d/drape now textures in sewing-pattern space (branch anjelo/texture-v2): listing photos -> PatternSpec via Claude (drape/spec.py) -> delit albedo -> per-panel cm rasters (stripes on grain, side stripes on the outseam, registered prints) -> UV atlas -> GLB; the old front projection stays behind `--legacy`
+- PatternSpec/StripeSet/Trim/Placement are a local copy in gen3d/drape/drape/patternspec.py; switch the import to shared/schema once garments-v3 merges
+- bottoms hold the waist for the whole sim, tops drape in a 45° A-pose and bind back to the 20° web pose (tees still ride ~6 cm low: mannequin shoulders); eval set via `python -m drape.inputs --set texture`, scores + screenshots in gen3d/drape/RESULTS_TEXTURE.md
+- action needed: none (gen3d drape only, nothing wired into prod)
+
 ## 2026-10-20 21:05 · anjelo · gen3d drape poc
 - sewing-pattern + cloth-sim PoC lives in gen3d/drape (own uv package; nothing wired into prod): 4 real prod items -> Claude design params -> pygarment patterns on size bodies -> our mannequin exported as a GarmentCode body; panel texturing, morph-bound GLBs (web useBodyMorphs-compatible) and a side-by-side viewer all run locally
 - the warp cloth sim itself needs a CUDA box: drape/scripts/setup_gpu.sh + run_poc.sh are ready, local CPU sim segfaults (documented); numbers, screenshots, license flag (warp fork is non-commercial) and verdict in gen3d/drape/RESULTS.md
