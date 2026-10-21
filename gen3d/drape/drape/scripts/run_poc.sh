@@ -90,13 +90,18 @@ for exp in sizes layers; do
     echo "-- experiment $exp: $((SECONDS - exp_start)) s"
 done
 
-step "texture / export / bind"
+step "texture / bind / export"
+# bind writes the web-pose obj that export and the legacy projection read
 "${UV[@]}" python -m drape.texture --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
-    echo "texture failed (module may not exist yet)"
-"${UV[@]}" python -m drape.export --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
-    echo "export failed (module may not exist yet)"
+    echo "texture failed"
 "${UV[@]}" python -m drape.bind --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
-    echo "bind failed (module may not exist yet)"
+    echo "bind failed"
+"${UV[@]}" python -m drape.texture --inputs "$INPUTS_DIR" --out "$OUT_DIR" --legacy ||
+    echo "legacy texture failed"
+"${UV[@]}" python -m drape.export --inputs "$INPUTS_DIR" --out "$OUT_DIR" ||
+    echo "export failed"
+"${UV[@]}" python -m drape.export --inputs "$INPUTS_DIR" --out "$OUT_DIR" --legacy ||
+    echo "legacy export failed"
 
 step "summary"
 TOTAL=$((SECONDS - TOTAL_START))
