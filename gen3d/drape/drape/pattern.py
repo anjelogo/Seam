@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-from drape._repo import bootstrap, GC, DRAPE
+from drape._repo import bootstrap, DRAPE
 
 bootstrap()
 

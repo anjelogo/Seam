@@ -1,4 +1,4 @@
-"""Per-panel PBR texturing of draped garments: listing cutout warped onto the panels + procedural fabric."""
+"""PBR texturing of draped garments: spec -> delight -> panels -> synth -> UV atlas (--legacy: photo front projection)."""
 
 from __future__ import annotations
 
@@ -65,11 +65,12 @@ def item_dirs(inputs: Path, only: str | None = None) -> list[dict]:
 
 
 def find_mesh(out: Path, safe: str) -> Path | None:
-    """Post-sim obj if there is one, else the pre-sim boxmesh fixture."""
+    """Post-sim obj (re-posed to the web pose when the sim ran in the A-pose), else the pre-sim boxmesh."""
     base = out / safe
     if not base.exists():
         return None
-    for pat in ("sim/**/*_sim.obj", "sim*/**/*_sim.obj", "sim/**/*_boxmesh.obj", "sim*/**/*_boxmesh.obj"):
+    for pat in ("sim/**/*_sim_posed.obj", "sim/**/*_sim.obj", "sim*/**/*_sim.obj", "sim/**/*_boxmesh.obj",
+                "sim*/**/*_boxmesh.obj"):
         hits = sorted(base.glob(pat))
         if hits:
             return hits[0]
@@ -78,7 +79,7 @@ def find_mesh(out: Path, safe: str) -> Path | None:
 
 def mesh_name(path: Path) -> str:
     stem = path.stem
-    for suffix in ("_sim", "_boxmesh"):
+    for suffix in ("_sim_posed", "_sim", "_boxmesh"):
         if stem.endswith(suffix):
             return stem[: -len(suffix)]
     return stem
@@ -363,7 +364,7 @@ def to_normal(height: np.ndarray, strength: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------- per item
 
 
-def texture_item(entry: dict, out_root: Path, size: int) -> dict:
+def texture_legacy(entry: dict, out_root: Path, size: int) -> dict:
     safe = entry["safe"]
     mesh_path = find_mesh(out_root, safe)
     if mesh_path is None:
@@ -441,7 +442,7 @@ def texture_item(entry: dict, out_root: Path, size: int) -> dict:
     rough_px[..., 1] = (rough * 255).round().clip(0, 255).astype(np.uint8)
     normal = to_normal(height, strength)
 
-    tex_dir = out_root / safe / "texture"
+    tex_dir = out_root / safe / "texture_legacy"
     tex_dir.mkdir(parents=True, exist_ok=True)
     Image.fromarray(basecolor).save(tex_dir / "basecolor.png")
     Image.fromarray(normal).save(tex_dir / "normal.png")
@@ -458,7 +459,7 @@ def texture_item(entry: dict, out_root: Path, size: int) -> dict:
     preview.save(tex_dir / "preview.png")
 
     info = {
-        "safe": safe, "mesh": str(mesh_path.relative_to(out_root)), "fabric": fabric,
+        "mode": "legacy", "safe": safe, "mesh": str(mesh_path.relative_to(out_root)), "fabric": fabric,
         "dominant": [int(v) for v in dom], "size": size,
         "garment_cm": [round(float(v), 1) for v in (box[1] - box[0])],
         "coverage": round(float(filled.mean()), 3), "unlabeled_faces": int((face < 0).sum()),
@@ -468,25 +469,117 @@ def texture_item(entry: dict, out_root: Path, size: int) -> dict:
     return info
 
 
+def texture_v2(entry: dict, inputs: Path, out_root: Path, normal_size: int = 2048) -> dict:
+    from drape import atlas, delight, panels, spec, synth
+
+    safe, item_dir = entry["safe"], entry["dir"]
+    mesh_path = find_mesh(out_root, safe)
+    if mesh_path is None:
+        raise SystemExit(f"{safe}: no *_sim.obj or *_boxmesh.obj under {out_root / safe}")
+    if not (item_dir / "spec.json").exists():
+        spec.process({"safe": safe}, inputs, force=False)
+    if not (item_dir / "albedo.png").exists():
+        delight.process_item(item_dir)
+    # rebuilt from the pattern this mesh came from, so panels and the atlas fit never drift apart
+    panels.write_item(out_root, safe, mesh_path.parent / f"{mesh_name(mesh_path)}_specification.json")
+    pspec = spec.load_spec(item_dir)
+
+    fits = atlas.fit_islands(mesh_path)
+    s = atlas.atlas_scale(fits)
+    periods = [r.period_cm for r in pspec.repeats]
+    size = atlas.pick_size(min(periods) if periods else None, s)
+    collapse = atlas.collapse_cm(size, s)
+    res = synth.synthesize(item_dir, out_root / safe, ppc=atlas.ppc_for(size, s), collapse_period_cm=collapse)
+    packed = atlas.pack(mesh_path, res["panels"], size, fits)
+    rows, cols, panel_of, names = packed["rows"], packed["cols"], packed["panel_of"], packed["panels"]
+
+    tags = entry["item"].get("tags") or {}
+    meta = entry["meta"]
+    fabric = fabric_for(meta.get("material") or tags.get("material"),
+                        meta.get("category") or tags.get("category"), meta.get("role"))
+    rib = {n: bool(res["panels"].get(n, {}).get("rib")) for n in names}
+    ppc = size * s
+    white = noise(size)
+    height = np.full((size, size), 0.5, np.float32)
+    rough = np.ones((size, size), np.float32)
+    strength = np.zeros((size, size), np.float32)
+    fields: dict[str, np.ndarray] = {}
+    report = {}
+    for i, n in enumerate(names):
+        sel = panel_of == i
+        if not sel.any():
+            continue
+        fab = "rib" if rib[n] else fabric
+        if fab not in fields:
+            fields[fab] = height_field(fab, ppc, size, white)
+        r, c = rows[sel], cols[sel]
+        height[r, c] = fields[fab][r, c]
+        rough[r, c] = FABRIC[fab]["rough"]
+        strength[r, c] = FABRIC[fab]["strength"]
+        report[n] = {"fabric": fab, "texels": int(sel.sum()), "rib": rib[n]}
+
+    rgb = packed["rgb"]
+    filled = np.zeros((size, size), bool)
+    filled[rows, cols] = True
+    filled = grow(filled, [rgb, height, rough, strength], FILL_PX)
+    rgb[borders(packed["ids"], SEAM_PX)] *= SEAM_DARKEN
+    basecolor = rgb.round().clip(0, 255).astype(np.uint8)
+    normal = Image.fromarray(to_normal(height, strength))
+    rough_px = np.zeros((size, size, 3), np.uint8)
+    rough_px[..., 1] = (rough * 255).round().clip(0, 255).astype(np.uint8)
+    rough_img = Image.fromarray(rough_px)
+    if size > normal_size:
+        normal = normal.resize((normal_size, normal_size), Image.Resampling.BOX)
+        rough_img = rough_img.resize((normal_size, normal_size), Image.Resampling.BOX)
+
+    tex_dir = out_root / safe / "texture"
+    tex_dir.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(basecolor).save(tex_dir / "basecolor.png")
+    normal.save(tex_dir / "normal.png")
+    rough_img.save(tex_dir / "roughness.png")
+    preview = basecolor.copy()
+    preview[borders(packed["ids"], 1)] = [255, 0, 255]
+    Image.fromarray(preview).resize((1024, 1024), Image.Resampling.BOX).save(tex_dir / "preview.png")
+
+    info = {
+        "mode": "v2", "safe": safe, "mesh": str(mesh_path.relative_to(out_root)), "fabric": fabric, "size": size,
+        "atlas_ppc": round(ppc, 3), "synth_ppc": res["ppc"], "uv_per_cm": s,
+        "min_period_cm": res.get("min_period_cm"),
+        "min_period_px": round(min(periods) * ppc, 2) if periods else None,
+        "collapse_period_cm": round(collapse, 4), "coverage": round(float(filled.mean()), 3),
+        "fit_resid_cm": max(f["resid_cm"] for f in fits.values()), "missing_panels": packed["missing"],
+        "synth": res.get("meta", {}), "panels": report,
+    }
+    (tex_dir / "meta.json").write_text(json.dumps(info, indent=2, default=str))
+    return info
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--inputs", type=Path, default=DRAPE / "runs/inputs")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--only")
-    ap.add_argument("--size", type=int, default=SIZE)
+    ap.add_argument("--legacy", action="store_true", help="old front projection, written to <safe>/texture_legacy/")
+    ap.add_argument("--size", type=int, default=SIZE, help="legacy atlas size; v2 picks 2048 or 4096 itself")
     a = ap.parse_args()
 
     entries = item_dirs(a.inputs, a.only)
     if not entries:
         raise SystemExit(f"no items with item.json under {a.inputs}")
     for e in entries:
-        info = texture_item(e, a.out, a.size)
-        kinds = Counter(p["kind"] for p in info["panels"].values())
-        ppc = [p["px_per_cm"] for p in info["panels"].values()]
-        print(f"{info['safe']} | {Path(info['mesh']).name} | {info['fabric']} | dom {tuple(info['dominant'])} | "
-              f"panels {dict(sorted(kinds.items()))} | atlas {info['coverage'] * 100:.1f}% | "
-              f"px/cm {min(ppc):.1f}-{max(ppc):.1f} | unlabeled faces {info['unlabeled_faces']}")
-    print(f"ok: {len(entries)} items -> {a.out}/<safe>/texture/")
+        if a.legacy:
+            info = texture_legacy(e, a.out, a.size)
+            kinds = Counter(p["kind"] for p in info["panels"].values())
+            ppc = [p["px_per_cm"] for p in info["panels"].values()]
+            print(f"{info['safe']} | legacy | {Path(info['mesh']).name} | {info['fabric']} | "
+                  f"panels {dict(sorted(kinds.items()))} | atlas {info['coverage'] * 100:.1f}% | "
+                  f"px/cm {min(ppc):.1f}-{max(ppc):.1f} | unlabeled faces {info['unlabeled_faces']}")
+            continue
+        info = texture_v2(e, a.inputs, a.out)
+        print(f"{info['safe']} | v2 | {Path(info['mesh']).name} | {info['size']}px @ {info['atlas_ppc']:.1f} px/cm | "
+              f"min period {info['min_period_px']} px | atlas {info['coverage'] * 100:.1f}% | "
+              f"fit {info['fit_resid_cm']:.1e} cm | missing {info['missing_panels'] or 'none'}")
+    print(f"ok: {len(entries)} items -> {a.out}/<safe>/{'texture_legacy' if a.legacy else 'texture'}/")
 
 
 if __name__ == "__main__":

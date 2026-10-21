@@ -81,13 +81,27 @@ def verify(glb: Path) -> dict:
     }
 
 
+def bound_variant(out: Path, safe: str, tex_dir: Path, suffix: str) -> Path | None:
+    """A copy of the morph-bound GLB (bind.py textures it with v2) carrying another basecolor, for side-by-side viewing."""
+    bound = out / safe / "glb" / f"{safe}_bound.glb"
+    if not bound.is_file() or not suffix:
+        return None
+    from app.pipeline.bake import inject_texture
+
+    target = bound.with_name(f"{safe}_bound{suffix}.glb")
+    inject_texture(bound, Image.open(tex_dir / "basecolor.png").convert("RGB"), target)
+    return target
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--inputs", type=Path, default=DRAPE / "runs/inputs")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--only")
+    ap.add_argument("--legacy", action="store_true", help="texture_legacy/ maps -> <safe>_draped_legacy.glb")
     a = ap.parse_args()
 
+    tex_name, suffix = ("texture_legacy", "_legacy") if a.legacy else ("texture", "")
     entries = item_dirs(a.inputs, a.only)
     if not entries:
         raise SystemExit(f"no items with item.json under {a.inputs}")
@@ -97,8 +111,10 @@ def main() -> None:
         mesh_path = find_mesh(a.out, safe)
         if mesh_path is None:
             raise SystemExit(f"{safe}: no *_sim.obj or *_boxmesh.obj under {a.out / safe}")
-        glb = build(mesh_path, a.out / safe / "texture", a.out / safe / "glb" / f"{safe}_draped.glb", safe)
-        info = verify(glb) | {"safe": safe, "mesh": mesh_path.name}
+        tex_dir = a.out / safe / tex_name
+        glb = build(mesh_path, tex_dir, a.out / safe / "glb" / f"{safe}_draped{suffix}.glb", safe)
+        bound = bound_variant(a.out, safe, tex_dir, suffix)
+        info = verify(glb) | {"safe": safe, "mesh": mesh_path.name, "bound": bound.name if bound else None}
         report.append(info)
         maps = " ".join(k for k in ("basecolor", "normal", "roughness") if info[k])
         print(f"{safe} | {glb.relative_to(a.out)} | {info['verts']}v {info['faces']}f | {maps}"
@@ -106,7 +122,7 @@ def main() -> None:
               f"bbox {info['bbox'][0]} -> {info['bbox'][1]} m | {'in bounds' if info['in_bounds'] else 'OUT OF BOUNDS'}")
         if not (info["uv"] and info["basecolor"] and info["in_bounds"]):
             bad.append(safe)
-    (a.out / "glb_report.json").write_text(json.dumps(report, indent=2))
+    (a.out / f"glb_report{suffix}.json").write_text(json.dumps(report, indent=2))
     if bad:
         raise SystemExit(f"verify failed: {', '.join(bad)}")
     print(f"ok: {len(report)} glbs verified")
