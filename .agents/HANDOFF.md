@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-21 17:05 · anjelo · gen3d mannequin + drape texture v3
+- mannequin shoulders widened/flattened to GarmentCode's mean (masc 36.5 cm @ 22.0°, fem scaled by the same ratio; assets/avatar_*.glb, template GLBs and anchors.json re-exported, morph target names unchanged) — the web avatar GLB is new and item textures need a rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when branch anjelo/texture-v3 lands
+- drape texture v3 (same branch): neckline depth prior (params --reclamp), seam-true tint/back-seed, LSQ stripe phase + collar/hood frames, sub-bands/line-trims/leg-logo spec fields, underarm smear fix, retuned twill/jersey normals, honest verify gates, 3-pass eval — 12-item judge v3 1.50 vs v2 1.34 vs legacy 1.01, details in gen3d/drape/RESULTS_TEXTURE_V3.md
+- sim license: the warp fork is NVIDIA Source Code License non-commercial only; no drop-in permissive swap — ~3.3k-line feature port, target Newton 1.7.0 (Apache-2.0); pattern generation already MIT-clean (gen3d/drape/LICENSE_SPIKE.md)
+- action needed: none (gen3d drape only; nothing wired into prod)
+
 ## 2026-10-21 00:25 · anjelo · gen3d drape texture v2
 - gen3d/drape now textures in sewing-pattern space (branch anjelo/texture-v2): listing photos -> PatternSpec via Claude (drape/spec.py) -> delit albedo -> per-panel cm rasters (stripes on grain, side stripes on the outseam, registered prints) -> UV atlas -> GLB; the old front projection stays behind `--legacy`
 - PatternSpec/StripeSet/Trim/Placement are a local copy in gen3d/drape/drape/patternspec.py; switch the import to shared/schema once garments-v3 merges

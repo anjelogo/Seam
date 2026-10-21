@@ -36,6 +36,7 @@
   <span>| right pane:</span><span id="modes"></span>
   <span id="sizes"></span>
   <span>| texture:</span><span id="texs"></span>
+  <span id="runlabel" style="display:none">| run:</span><span id="runsw"></span>
   <span style="margin-left:auto" id="status">loading manifest…</span>
 </div>
 <div id="sliders"></div>
@@ -50,7 +51,9 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const PARAMS = new URLSearchParams(location.search);
 const EVAL = PARAMS.has("eval");
-const ROOT = `/gen3d/drape/${PARAMS.get("out") || "runs/out"}`;
+const RUN_PAIRS = { "runs/out_texture": "runs/out_texture_v3", "runs/out_v2": "runs/out_v3" };
+let RUN = PARAMS.get("out") || "runs/out";
+let ROOT = `/gen3d/drape/${RUN}`;
 const SLIDER_NAMES = ["height","weight","muscle","shoulders","chest","waist","hips","leg_length"];
 const loader = new GLTFLoader();
 const state = { item: null, mode: "draped", size: "fit", tex: "v2", manifest: null, weights: Object.fromEntries(SLIDER_NAMES.map(n => [n, 0.5])) };
@@ -129,13 +132,13 @@ async function refresh() {
 function applyAll() {
   for (const p of [L, R]) { applyMorphs(p.avatar, state.weights); applyMorphs(p.garment, state.weights); }
 }
-function buttonRow(el, values, get, set) {
+function buttonRow(el, values, get, set, label = v => v) {
   el.innerHTML = "";
   for (const v of values) {
     const b = document.createElement("button");
-    b.textContent = v;
+    b.textContent = label(v);
     b.className = get() === v ? "on" : "";
-    b.onclick = () => { set(v); buttonRow(el, values, get, set); refresh(); };
+    b.onclick = async () => { await set(v); buttonRow(el, values, get, set, label); refresh(); };
     el.appendChild(b);
   }
 }
@@ -149,20 +152,36 @@ function sliders() {
     el.appendChild(lab);
   }
 }
+async function loadRun(run) {
+  const manifest = await (await fetch(`/gen3d/drape/${run}/viewer_manifest.json`)).json();
+  RUN = run; ROOT = `/gen3d/drape/${run}`;
+  state.manifest = manifest;
+  if (!manifest.items.find(i => i.safe === state.item)) state.item = manifest.items[0].safe;
+  buttonRow(document.getElementById("items"), manifest.items.map(i => i.safe), () => state.item, v => { state.item = v; state.size = "fit"; });
+  const ver = () => Object.values(RUN_PAIRS).includes(RUN) ? "v3" : "v2";
+  buttonRow(document.getElementById("texs"), ["v2", "legacy"], () => state.tex, v => { state.tex = v; }, v => v === "v2" ? ver() : v);
+}
 async function main() {
   try {
-    state.manifest = await (await fetch(`${ROOT}/viewer_manifest.json`)).json();
+    await loadRun(RUN);
   } catch {
     document.getElementById("status").textContent =
       "no manifest — run: uv run --no-sync python viewer/build_manifest.py (from gen3d/drape), serve repo root: python3 -m http.server 8808";
     return;
   }
-  state.item = state.manifest.items[0].safe;
-  buttonRow(document.getElementById("items"), state.manifest.items.map(i => i.safe), () => state.item, v => { state.item = v; state.size = "fit"; });
   buttonRow(document.getElementById("modes"), ["draped", "bound"], () => state.mode, v => { state.mode = v; });
   const sz = ["fit", "XS", "M", "XL"];
   buttonRow(document.getElementById("sizes"), sz, () => state.size, v => { state.size = v; state.mode = "draped"; });
-  buttonRow(document.getElementById("texs"), ["v2", "legacy"], () => state.tex, v => { state.tex = v; });
+  const pairV2 = RUN_PAIRS[RUN] ? RUN : (Object.entries(RUN_PAIRS).find(([, v]) => v === RUN) || [null])[0];
+  if (pairV2) {
+    const pair = { v2: pairV2, v3: RUN_PAIRS[pairV2] };
+    const other = RUN === pair.v3 ? pair.v2 : pair.v3;
+    const probe = await fetch(`/gen3d/drape/${other}/viewer_manifest.json`, { method: "HEAD" }).catch(() => null);
+    if (probe && probe.ok) {
+      document.getElementById("runlabel").style.display = "";
+      buttonRow(document.getElementById("runsw"), ["v2", "v3"], () => (RUN === pair.v3 ? "v3" : "v2"), async v => { await loadRun(pair[v]); });
+    }
+  }
   sliders();
   if (EVAL) {
     R.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 20);
