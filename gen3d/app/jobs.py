@@ -17,9 +17,12 @@ from seam_shared.models import (
     AssetTier,
     BodyBase,
     Category,
+    Garment,
     GenJob,
+    ImageRef,
     Item,
     OutfitResponse,
+    Photo,
     Slot,
 )
 
@@ -180,15 +183,21 @@ def fixture_items() -> dict[str, Item]:
     return OutfitResponse.model_validate_json(FIXTURE.read_bytes()).items
 
 
-def job_for(item_id: str, resolution: int = 1024) -> GenJob | None:
-    item = store.item(item_id) or fixture_items().get(item_id)
-    tags = item.tags if item else None
+def _fallback_image(source: Garment | Item) -> ImageRef | Photo | None:
+    if isinstance(source, Garment):
+        return source.best_photo or next(iter(source.best_listing().photos), None)
+    return next(iter(source.listing.images), None)
+
+
+def job_for(garment_id: str, resolution: int = 1024) -> GenJob | None:
+    source = store.garment(garment_id) or fixture_items().get(garment_id)
+    tags = source.tags if source else None
     if not (tags and tags.usable_for_3d):
         return None
-    image = tags.clean_image or next(iter(item.listing.images), None)
+    image = tags.clean_image or _fallback_image(source)
     if image is None:
         return None
-    return GenJob(item_id=item_id, image_url=image.url, category=tags.category, resolution=resolution)
+    return GenJob(item_id=garment_id, image_url=image.url, category=tags.category, resolution=resolution)
 
 
 def submit(job: GenJob) -> Asset3D:

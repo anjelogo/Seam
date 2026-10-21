@@ -3,7 +3,7 @@ from datetime import datetime
 
 import psycopg
 from seam_shared import db
-from seam_shared.models import Asset3D, Item
+from seam_shared.models import Asset3D, Garment
 
 log = logging.getLogger(__name__)
 
@@ -15,28 +15,32 @@ def load() -> list[Asset3D]:
 
 def stamped() -> dict[str, tuple[Asset3D, datetime]]:
     with db.pool().connection() as conn:
-        rows = conn.execute("SELECT item_id, json, updated_at FROM assets").fetchall()
-    return {r["item_id"]: (Asset3D.model_validate(r["json"]), r["updated_at"]) for r in rows}
+        rows = conn.execute("SELECT garment_id, json, updated_at FROM assets WHERE garment_id IS NOT NULL").fetchall()
+    return {r["garment_id"]: (Asset3D.model_validate(r["json"]), r["updated_at"]) for r in rows}
 
 
 def usable(categories: list[str]) -> list[str]:
     with db.pool().connection() as conn:
-        rows = conn.execute("SELECT id FROM items WHERE category = ANY(%s) AND usable_3d AND status = 'active'", (categories,))
+        rows = conn.execute(
+            "SELECT id FROM garments WHERE category = ANY(%s) AND usable_3d AND EXISTS "
+            "(SELECT 1 FROM listings WHERE listings.garment_id = garments.id AND listings.status = 'active')",
+            (categories,),
+        )
         return [r["id"] for r in rows]
 
 
-def get(item_id: str) -> Asset3D | None:
+def get(garment_id: str) -> Asset3D | None:
     try:
         with db.pool().connection() as conn:
-            return db.get_asset(conn, item_id)
+            return db.get_asset(conn, garment_id)
     except psycopg.Error:
-        log.exception("could not read asset %s", item_id)
+        log.exception("could not read asset %s", garment_id)
         return None
 
 
-def item(item_id: str) -> Item | None:
+def garment(garment_id: str) -> Garment | None:
     with db.pool().connection() as conn:
-        return db.get_item(conn, item_id)
+        return db.get_garment(conn, garment_id)
 
 
 def upsert(asset: Asset3D) -> None:
