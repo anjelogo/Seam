@@ -19,6 +19,12 @@ Composition
 - jeans / trousers -> meta.bottom=Pants, pants.cuff.type=null, straighter leg.
 - FittedShirt is only for a genuinely tailored, body-hugging top; streetwear and casual tops are Shirt.
 
+Neckline depth
+- collar.fc_depth and collar.bc_depth are not centimetres: they are fractions of the wearer's shoulder-to-bust length, about 18 cm, so 0.4 is roughly a 7.3 cm front neck drop.
+- Pick the front neck drop for the neckline you see: crew 7-10 cm (fc_depth 0.38-0.55), scoop 10-14 cm (0.55-0.77), v-neck 12-20 cm (0.66-1.09), hoodie 6-9 cm (0.33-0.49). Nudge about 10% shallower at XS and 10% deeper at XXL.
+- The back neck drop is always small, 1.5-3 cm, so collar.bc_depth belongs near 0.08-0.16. Leaving it at 0 puts the back neckline on the shoulder line.
+- A tee or sweatshirt that is merely oversized still has a crew neckline; width, not depth, is what makes it baggy.
+
 Reading the listing
 - Fit words (oversized, relaxed, baggy, boxy, wide, y2k) -> larger shirt.width, shirt.flare, sleeve.end_width, pants.width, pants.flare. Slim, fitted, skinny, tapered -> values near the low end.
 - cropped / boxy -> shorter shirt.length or pants.length; long, tall, stacked, puddle -> longer.

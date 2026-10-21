@@ -9,6 +9,7 @@ import io
 import json
 import re
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,14 @@ SLOT_RULE = {
 # slot -> (the meta path that must be non-null for the garment to assemble, fallback value)
 MAIN = {"upper": ("meta.upper", "Shirt"), "bottom": ("meta.bottom", "Pants"), "skirt": ("meta.bottom", "PencilSkirt")}
 NULLED = {"upper": ("meta.bottom",), "bottom": ("meta.upper",), "skirt": ("meta.upper",)}
+
+# Neckline depth prior, in cm of front/back neck drop below the neck base.
+NECK_CM = {"crew": (7.0, 10.0), "scoop": (10.0, 14.0), "vneck": (12.0, 20.0), "hoodie": (6.0, 9.0)}
+BACK_NECK_CM = (1.5, 3.0)
+SIZE_LADDER = ("XS", "S", "M", "L", "XL", "XXL")
+VNECK_SHAPES = {"VNeckHalf", "TrapezoidNeckHalf"}
+SCOOP_SHAPES = {"CurvyNeckHalf", "CircleArcNeckHalf", "Bezier2NeckHalf"}
+WEARER = "wearer_masc"
 
 ROLE_SLOT = {"hoodie": "upper", "tee": "upper", "sweats": "bottom", "jeans": "bottom"}
 CATEGORY_SLOT = {
@@ -149,6 +158,76 @@ def validate(raw: dict[str, Any], schema: dict[str, dict]) -> tuple[dict[str, An
         except (TypeError, ValueError) as e:
             invalid.append(f"INVALID {path}={val!r}: {e}")
     return values, clamps, invalid
+
+
+def size_factor(size: str | None) -> float:
+    try:
+        i = SIZE_LADDER.index((size or "").strip().upper())
+    except ValueError:
+        return 1.0
+    return 0.9 + 0.2 * i / (len(SIZE_LADDER) - 1)
+
+
+@lru_cache(maxsize=None)
+def bust_line(wearer: str = WEARER) -> float:
+    """cm the collar depth fractions are measured against (GarmentCode body_params.py:25-29)."""
+    import yaml
+
+    from drape._repo import RUNS
+
+    path = RUNS / "bodies" / f"{wearer}.yaml"
+    if not path.exists():
+        path = schema_file().parent.parent / "bodies" / "mean_all.yaml"
+    body = yaml.safe_load(path.read_text())["body"]
+    if "vert_bust_line" in body:
+        return (1 - 1 / 3) * body["vert_bust_line"] + 1 / 3 * body["bust_line"]
+    return float(body["bust_line"])
+
+
+def _current(values: dict[str, Any], schema: dict[str, dict], path: str) -> Any:
+    return values[path] if path in values else (schema[path]["v"] if path in schema else None)
+
+
+def neckline_kind(values: dict[str, Any], schema: dict[str, dict], entry: dict) -> str:
+    style = str(_current(values, schema, "collar.component.style") or "")
+    tags = f"{entry.get('role') or ''} {entry.get('category') or ''}".lower()
+    if "hood" in style.lower() or "hoodie" in tags:
+        return "hoodie"
+    shape = _current(values, schema, "collar.f_collar")
+    if shape in VNECK_SHAPES:
+        return "vneck"
+    if shape in SCOOP_SHAPES:
+        return "scoop"
+    return "crew"
+
+
+def clamp_neckline(values: dict[str, Any], schema: dict[str, dict], slot: str, entry: dict) -> list[str]:
+    """Hold the neck drop inside the prior for this neckline and size, working in cm."""
+    if slot != "upper" or "collar.fc_depth" not in schema:
+        return []
+    bl = bust_line()
+    kind = neckline_kind(values, schema, entry)
+    size = (entry.get("size_normalized") or "").strip().upper()
+    scale = size_factor(size)
+    notes = []
+    for path, band, side, scaled in (
+        ("collar.fc_depth", NECK_CM[kind], "front", True),
+        ("collar.bc_depth", BACK_NECK_CM, "back", False),
+    ):
+        node = schema[path]
+        lo, hi = (band[0] * scale, band[1] * scale) if scaled else band
+        cur = float(_current(values, schema, path))
+        cm = cur * bl
+        if lo - 1e-3 <= cm <= hi + 1e-3:
+            continue
+        want = min(max(cm, lo), hi)
+        frac = round(min(max(want / bl, float(node["range"][0])), float(node["range"][-1])), 6)
+        got = frac * bl
+        values[path] = frac
+        verb = "CLAMP" if abs(got - want) <= 1e-3 else "UNREACHABLE"
+        notes.append(f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({kind} {size or 'unsized'} {side} "
+                     f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm)")
+    return notes
 
 
 def enforce_slot(values: dict[str, Any], slot: str) -> list[str]:
@@ -285,6 +364,7 @@ def ask(entry: dict, item_dir: Path, design: dict) -> dict:
         ]
 
     clamps += enforce_slot(values, slot)
+    clamps += clamp_neckline(values, schema, slot, entry)
     return {
         "slot": slot, "values": values, "clamps": clamps, "invalid": invalid, "raw": text, "retried": retried,
         "input_tokens": in_tok, "output_tokens": out_tok, "wall_seconds": round(time.perf_counter() - start, 2),
@@ -305,6 +385,48 @@ def process(entry: dict, inputs: Path, design: dict) -> dict:
     (item_dir / "params_meta.json").write_text(json.dumps(meta, indent=2))
     result["cost"] = result["input_tokens"] * PRICE_IN + result["output_tokens"] * PRICE_OUT
     return result
+
+
+def _set(tree: dict, path: str, val: Any) -> None:
+    node = tree
+    *parents, last = path.split(".")
+    for key in parents:
+        node = node[key]
+    node[last]["v"] = val
+
+
+def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
+    """Re-apply the neckline prior to an existing params.json, without calling the model."""
+    item_dir = inputs / entry["safe"]
+    path = item_dir / "params.json"
+    if not path.exists():
+        return None
+    doc = json.loads(path.read_text())
+    tree = doc["design"] if "design" in doc else doc
+    slot = slot_of(entry.get("role"), entry.get("category"))
+    schema = slice_schema(design, slot)
+    if slot != "upper" or "collar" not in tree or tree["meta"]["upper"]["v"] is None:
+        return None
+    values = {p: n["v"] for p, n in leaves(tree).items() if p in schema}
+    bl = bust_line()
+    front, back = "collar.fc_depth", "collar.bc_depth"
+    kind = neckline_kind(values, schema, entry)
+    was = {p: float(values[p]) for p in (front, back)}
+    notes = clamp_neckline(values, schema, slot, entry)
+    for p in (front, back):
+        _set(tree, p, values[p])
+    path.write_text(json.dumps(doc, indent=2))
+
+    meta_path = item_dir / "params_meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta["clamps"] = (meta.get("clamps") or []) + notes
+    meta["reclamped"] = True
+    meta_path.write_text(json.dumps(meta, indent=2))
+    return {
+        "safe": entry["safe"], "kind": kind, "size": (entry.get("size_normalized") or "").upper(),
+        "front_before_cm": was[front] * bl, "front_after_cm": float(values[front]) * bl,
+        "back_before_cm": was[back] * bl, "back_after_cm": float(values[back]) * bl, "notes": notes,
+    }
 
 
 def assemble(name: str, design: dict) -> tuple[int, bool]:
@@ -328,6 +450,7 @@ def main() -> None:
     p.add_argument("--inputs", default="runs/inputs", help="directory holding manifest.json (default: runs/inputs)")
     p.add_argument("--only", metavar="SAFE", help="process just this manifest item")
     p.add_argument("--assemble", action="store_true", help="dry-run MetaGarment on each result")
+    p.add_argument("--reclamp", action="store_true", help="re-apply the neckline prior to existing params.json, no model call")
     a = p.parse_args()
 
     inputs = Path(a.inputs)
@@ -338,6 +461,18 @@ def main() -> None:
             raise SystemExit(f"no manifest item matches {a.only!r}")
 
     design = load_design()
+    if a.reclamp:
+        rows = [r for r in (reclamp(e, inputs, design) for e in entries) if r]
+        print(f"{'safe':<20}{'neckline':<9}{'size':<6}{'front cm':<18}{'back cm':<18}")
+        for r in rows:
+            print(f"{r['safe']:<20}{r['kind']:<9}{r['size'] or '?':<6}"
+                  f"{r['front_before_cm']:.2f} -> {r['front_after_cm']:<9.2f}"
+                  f"{r['back_before_cm']:.2f} -> {r['back_after_cm']:<9.2f}")
+            for note in r["notes"]:
+                print(f"  {note}")
+        print(f"ok: reclamped {len(rows)} items -> {inputs}/<safe>/params.json (bust_line {bust_line():.4f} cm)")
+        return
+
     total = 0.0
     for e in entries:
         r = process(e, inputs, design)
