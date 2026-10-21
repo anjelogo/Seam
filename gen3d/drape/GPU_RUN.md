@@ -20,8 +20,9 @@ repo worktree at /Users/anjelo/Github/Seam-drape-poc on branch anjelo/drape-poc.
 
 ## 1. Create the pod (runpod MCP, pod-deploy journey)
 
-- Catalog read first; pick the cheapest available of 1x RTX 4090 / RTX 3090 (24 GB is plenty;
-  paper baseline was a 3090 at ~30 s/garment). Quote the price from the read.
+- Catalog read first; pick the cheapest available of 1x RTX 4090 / RTX 3090 on Secure Cloud (24 GB
+  is plenty; paper baseline was a 3090 at ~30 s/garment). Quote the price from the read. v2
+  create-pod can't ask for a public IP on Community Cloud, and the rsync below needs direct SSH.
 - create-pod: name `seam-drape-poc`; gpu.minCudaVersion "12.8"; image
   `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` (any runpod/pytorch *-devel-*
   cuda12.x ubuntu22.04 tag works — it must have nvcc); containerDiskInGb 40; volumeInGb 50 at
@@ -33,10 +34,14 @@ repo worktree at /Users/anjelo/Github/Seam-drape-poc on branch anjelo/drape-poc.
 
 ```sh
 cd /Users/anjelo/Github/Seam-drape-poc
-rsync -az -e "ssh -p PORT -i ~/.ssh/id_ed25519" --exclude .venv --exclude vendor \
+ssh root@IP -p PORT -i ~/.ssh/id_ed25519 'apt-get update -qq && apt-get install -y -qq rsync'
+rsync -az --no-owner --no-group -e "ssh -p PORT -i ~/.ssh/id_ed25519" --exclude .venv --exclude vendor \
   --exclude runs/out --exclude .git gen3d shared assets pyproject.toml .python-version \
   root@IP:/workspace/seam/
 ```
+
+(The runpod/pytorch image ships without rsync. `--no-owner --no-group`: /workspace can be a
+MooseFS FUSE mount that refuses chown, which otherwise errors on every file and exits 23.)
 
 (runs/inputs and runs/bodies ride along inside gen3d/drape/runs/. The repo layout matters:
 drape/_repo.py resolves gen3d/../shared and ../assets relative to itself.)
@@ -55,7 +60,7 @@ loudly naming the failed step. If a sim fails, `pod-doctor` journey + runs/out/t
 fails field. For the binding-vs-redrape number:
 
 ```sh
-uv run --no-sync python -m drape.drape --only grailed_108767954 --wearer wearer_masc_183 --size L --out runs/out_redrape08   # after generating a height-0.8 body: uv run --no-sync python -m drape.body --base masc --name wearer_masc_h08 --sliders height=0.8
+uv run --no-sync python -m drape.drape --only grailed_108767954 --wearer wearer_masc_h08 --size L --out runs/out_redrape08   # after generating a height-0.8 body: uv run --no-sync python -m drape.body --base masc --name wearer_masc_h08 --sliders height=0.8
 uv run --no-sync python -m drape.bind --only grailed_108767954 --push height=0.8 --compare <path to that _sim.obj>
 ```
 
