@@ -546,7 +546,7 @@ def texture_v2(entry: dict, inputs: Path, out_root: Path, normal_size: int = 204
     fits = atlas.fit_islands(mesh_path)
     s = atlas.atlas_scale(fits)
     periods = [r.period_cm for r in pspec.repeats]
-    size = atlas.pick_size(min(periods) if periods else None, s)
+    size = atlas.pick_size(atlas.features_cm(pspec.repeats), s)
     collapse = atlas.collapse_cm(size, s)
     res = synth.synthesize(item_dir, out_root / safe, ppc=atlas.ppc_for(size, s), collapse_period_cm=collapse)
     packed = atlas.pack(mesh_path, res["panels"], size, fits)

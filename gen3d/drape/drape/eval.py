@@ -1,10 +1,12 @@
-"""Texture eval: orthographic front/side/back renders of legacy vs v2 drapes, LPIPS against the cutout, Claude rubric."""
+"""Texture eval: orthographic front/side/back renders of legacy vs v2 drapes, a multi-pass Claude rubric with
+per-criterion means, and LPIPS against the cutout kept in the CSV."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import base64
+import csv
 import functools
 import io
 import json
@@ -38,6 +40,9 @@ CRITERIA = {
     "print_not_mirrored": "graphics and text are readable, on the correct side, and not mirrored or smeared onto the back",
     "wrinkles_not_doubled": "the texture does not carry photographed wrinkles/shadows on top of the 3D folds",
 }
+SIDE_CRITERION = "matches_side_photo"
+SIDE_DESC = ("the last image is the listing's own {view} photo of this garment: the {view} render shows the same "
+             "pattern there - same lines, same bands, in the same places")
 
 
 def _serve(root: Path) -> tuple[ThreadingHTTPServer, int]:
@@ -110,36 +115,54 @@ def _jpeg(im: Image.Image, side: int = 768) -> dict:
     return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(buf.getvalue()).decode()}}
 
 
-def _rubric_schema() -> dict:
+def _rubric_schema(keys: list[str]) -> dict:
     score = {"type": ["integer", "null"], "enum": [0, 1, 2, None]}
-    props = {k: score for k in CRITERIA} | {"notes": {"type": "string"}}
-    return {"type": "object", "properties": props, "required": [*CRITERIA, "notes"]}
+    props = {k: score for k in keys} | {"notes": {"type": "string"}}
+    return {"type": "object", "properties": props, "required": [*keys, "notes"]}
 
 
-def rubric(item: dict, cutout: Image.Image, photo: Image.Image, renders: dict[str, Image.Image]) -> dict:
+def side_photo(item: dict, meta: dict, item_dir: Path) -> dict | None:
+    """The listing's own side or back photo, and which render viewpoint answers it."""
+    photos = (meta or {}).get("photos") or []
+    for i, im in enumerate(item.get("listing", {}).get("images", [])):
+        view = (im.get("view") or "").lower()
+        hit = next((v for v in VIEWS if v != "front" and v in view), None)
+        if hit and i < len(photos) and (item_dir / "photos" / photos[i]).exists():
+            return {"view": hit, "photo": photos[i], "path": item_dir / "photos" / photos[i]}
+    return None
+
+
+def rubric(item: dict, cutout: Image.Image, photo: Image.Image, renders: dict[str, Image.Image],
+           side: dict | None = None) -> dict:
     import anthropic
 
+    keys = [*CRITERIA] + ([SIDE_CRITERION] if side else [])
     lines = [f"- {k}: {v}" for k, v in CRITERIA.items()]
+    if side:
+        lines.append(f"- {SIDE_CRITERION}: " + SIDE_DESC.format(view=side["view"].upper()))
     text = (
         f"Listing: {item['listing']['title']}\n"
         "Images: 1 = background-removed listing photo, 2 = original listing photo, then the 3D garment rendered "
         "orthographically from the FRONT, the wearer's LEFT SIDE and the BACK.\n"
-        "Score how faithfully the 3D garment's fabric pattern reproduces the real garment, 0 (wrong or missing), "
+        + (f"The last image is the listing's own {side['view'].upper()} photo of this garment.\n" if side else "")
+        + "Score how faithfully the 3D garment's fabric pattern reproduces the real garment, 0 (wrong or missing), "
         "1 (partly right), 2 (right). Use null when a criterion cannot apply (e.g. stripe criteria on a solid garment, "
         "print criteria when there is no print). Judge the texture, not the 3D shape.\n" + "\n".join(lines)
     )
-    content = [_jpeg(_flat(cutout)), _jpeg(photo.convert("RGB"))] + [_jpeg(_flat(renders[v])) for v in VIEWS] + [{"type": "text", "text": text}]
+    content = [_jpeg(_flat(cutout)), _jpeg(photo.convert("RGB"))] + [_jpeg(_flat(renders[v])) for v in VIEWS] \
+        + ([_jpeg(Image.open(side["path"]).convert("RGB"))] if side else []) + [{"type": "text", "text": text}]
     client = anthropic.Anthropic()
     t0 = time.perf_counter()
     msg = client.messages.create(
         model=MODEL, max_tokens=1024, messages=[{"role": "user", "content": content}],
-        tools=[{"name": "score_texture", "description": "Record the rubric scores.", "input_schema": _rubric_schema()}],
+        tools=[{"name": "score_texture", "description": "Record the rubric scores.",
+                "input_schema": _rubric_schema(keys)}],
         tool_choice={"type": "tool", "name": "score_texture"},
     )
     block = next(b for b in msg.content if b.type == "tool_use")
     u = msg.usage
     tokens_in = u.input_tokens + (u.cache_creation_input_tokens or 0) + (u.cache_read_input_tokens or 0)
-    scores = {k: (block.input.get(k) if block.input.get(k) in (0, 1, 2) else None) for k in CRITERIA}
+    scores = {k: (block.input.get(k) if block.input.get(k) in (0, 1, 2) else None) for k in keys}
     return {"scores": scores, "notes": str(block.input.get("notes", ""))[:400], "seconds": round(time.perf_counter() - t0, 1),
             "cost": tokens_in * PRICE_IN + u.output_tokens * PRICE_OUT}
 
@@ -147,6 +170,18 @@ def rubric(item: dict, cutout: Image.Image, photo: Image.Image, renders: dict[st
 def mean_score(scores: dict) -> float | None:
     vals = [v for v in scores.values() if v is not None]
     return round(sum(vals) / len(vals), 2) if vals else None
+
+
+def mean_n(vals: list) -> dict:
+    """A criterion's mean over the judge passes that scored it, with the count that mean rests on."""
+    kept = [v for v in vals if v is not None]
+    return {"mean": round(sum(kept) / len(kept), 2) if kept else None, "n": len(kept)}
+
+
+def pass_spread(runs: list[dict], keys: list[str]) -> float | None:
+    """How far the judge moved between passes: max minus min of the per-pass item mean."""
+    means = [m for m in (mean_score({k: r["scores"].get(k) for k in keys}) for r in runs) if m is not None]
+    return round(max(means) - min(means), 2) if means else None
 
 
 def sheet(safe: str, out: Path, dest: Path) -> Path:
@@ -172,6 +207,52 @@ def sheet(safe: str, out: Path, dest: Path) -> Path:
     return path
 
 
+def criterion_means(results: list[dict], names: dict[str, str]) -> dict:
+    """Per criterion, per texture: the mean over the items that scored it and how many did."""
+    out: dict = {}
+    for key in [*CRITERIA, SIDE_CRITERION]:
+        row = {}
+        for name in names.values():
+            vals = [r[name]["scores"][key]["mean"] for r in results
+                    if name in r and key in r[name].get("scores", {})]
+            row[name] = mean_n(vals)
+        if any(v["n"] for v in row.values()):
+            out[key] = row
+    return out
+
+
+def write_csv(path: Path, results: list[dict], names: dict[str, str]) -> None:
+    keys = [*CRITERIA, SIDE_CRITERION]
+    head = ["safe", "role", "texture", "lpips_front", "mean", "spread", "side_view", "side_photo"]
+    head += [f"{k}" for k in keys] + [f"{k}_n" for k in keys]
+    rows = []
+    for r in results:
+        side = r["side_check"]
+        for name in names.values():
+            t = r.get(name)
+            if t is None:
+                continue
+            sc = t.get("scores", {})
+            rows.append([r["safe"], r.get("role") or "", name, t.get("lpips_front"), t.get("mean"), t.get("spread"),
+                         "" if side == "n/a" else side["view"], "" if side == "n/a" else side["photo"]]
+                        + [sc.get(k, {}).get("mean", "") for k in keys]
+                        + [sc.get(k, {}).get("n", "") for k in keys])
+    with path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(head)
+        w.writerows(rows)
+
+
+def headline(means: dict, names: dict[str, str]) -> None:
+    cols = list(names.values())
+    print("\nmean over items that scored each criterion (n = those items; each item's own score is the "
+          "mean of its judge passes)")
+    print(f"{'criterion':<26}" + "".join(f"{c:>18}" for c in cols))
+    for key, row in means.items():
+        cells = "".join(f"{str(row[c]['mean']) + ' (n=' + str(row[c]['n']) + ')':>18}" for c in cols)
+        print(f"{key:<26}{cells}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--inputs", type=Path, default=DRAPE / "runs/inputs_texture")
@@ -179,8 +260,11 @@ def main() -> None:
     ap.add_argument("--only")
     ap.add_argument("--no-claude", action="store_true")
     ap.add_argument("--shots", type=Path, default=DRAPE / "runs/out/shots/texture", help="where the legacy|v2 sheets go")
-    ap.add_argument("--passes", type=int, default=1, help="judge runs per variant, averaged per criterion")
+    ap.add_argument("--passes", type=int, default=3, help="judge runs per variant, averaged per criterion")
+    ap.add_argument("--label", default="v2", help="what to call the non-legacy texture in the report; "
+                                                  "the shot files and GLB paths keep their own names")
     a = ap.parse_args()
+    names = {"legacy": "legacy", "v2": a.label}
 
     out = a.out.resolve()
     subprocess.run([sys.executable, str(DRAPE / "viewer/build_manifest.py"), "--inputs", str(a.inputs), "--out", str(out)],
@@ -202,26 +286,43 @@ def main() -> None:
     results, cost = [], 0.0
     for e in entries:
         safe = e["safe"]
-        item = json.loads((a.inputs / safe / "item.json").read_text())
-        cutout = Image.open(a.inputs / safe / "cutout.png")
-        photo = Image.open(a.inputs / safe / "photo.jpg")
-        row = {"safe": safe, "role": e.get("role"), "title": e.get("title")}
+        item_dir = a.inputs / safe
+        item = json.loads((item_dir / "item.json").read_text())
+        meta_path = item_dir / "spec_meta.json"
+        side = side_photo(item, json.loads(meta_path.read_text()) if meta_path.exists() else {}, item_dir)
+        cutout = Image.open(item_dir / "cutout.png")
+        photo = Image.open(item_dir / "photo.jpg")
+        row = {"safe": safe, "role": e.get("role"), "title": e.get("title"),
+               "side_check": {"view": side["view"], "photo": side["photo"]} if side else "n/a"}
+        keys = [*CRITERIA] + ([SIDE_CRITERION] if side else [])
         for tex in TEXTURES:
             renders = {v: Image.open(out / safe / "eval" / f"{tex}_{v}.png") for v in VIEWS}
-            row[tex] = {"lpips_front": round(lpips_distance(renders["front"], cutout), 4)}
+            name = names[tex]
+            row[name] = {"lpips_front": round(lpips_distance(renders["front"], cutout), 4)}
             if not a.no_claude:
-                runs = [rubric(item, cutout, photo, renders) for _ in range(a.passes)]
+                runs = [rubric(item, cutout, photo, renders, side) for _ in range(a.passes)]
                 cost += sum(r.pop("cost") for r in runs)
-                scores = {k: mean_score({i: r["scores"][k] for i, r in enumerate(runs)}) for k in CRITERIA}
-                row[tex] |= {"scores": scores, "passes": [r["scores"] for r in runs], "notes": runs[0]["notes"],
-                             "seconds": round(sum(r["seconds"] for r in runs), 1), "mean": mean_score(scores)}
+                scores = {k: mean_n([r["scores"].get(k) for r in runs]) for k in keys}
+                row[name] |= {"scores": scores, "passes": [r["scores"] for r in runs], "notes": runs[0]["notes"],
+                              "seconds": round(sum(r["seconds"] for r in runs), 1),
+                              "mean": mean_score({k: v["mean"] for k, v in scores.items()}),
+                              "spread": pass_spread(runs, keys)}
+                if side:
+                    row["side_check"] |= {name: scores[SIDE_CRITERION]}
         row["sheet"] = str(sheet(safe, out, a.shots).relative_to(DRAPE))
         results.append(row)
-        lg, v2 = row["legacy"], row["v2"]
-        print(f"{safe} | {row['role']} | lpips legacy {lg['lpips_front']:.3f} v2 {v2['lpips_front']:.3f} | rubric "
-              f"legacy {lg.get('mean')} v2 {v2.get('mean')}")
-    (out / "eval.json").write_text(json.dumps({"model": MODEL, "criteria": CRITERIA, "items": results, "cost_usd": round(cost, 4)}, indent=2))
-    print(f"ok: {len(results)} items -> {out / 'eval.json'} | ${cost:.3f}")
+        sc = row["side_check"]
+        print(f"{safe} | {row['role']} | rubric " + " ".join(
+            f"{names[t]} {row[names[t]].get('mean')} (spread {row[names[t]].get('spread')})" for t in TEXTURES)
+            + f" | side {sc if sc == 'n/a' else sc['view'] + ' ' + sc['photo']}")
+
+    report = {"model": MODEL, "label": a.label, "passes": a.passes, "criteria": CRITERIA,
+              "side_criterion": {SIDE_CRITERION: SIDE_DESC}, "items": results,
+              "criterion_means": criterion_means(results, names), "cost_usd": round(cost, 4)}
+    (out / "eval.json").write_text(json.dumps(report, indent=2, default=str))
+    write_csv(out / "eval.csv", results, names)
+    headline(report["criterion_means"], names)
+    print(f"ok: {len(results)} items -> {out / 'eval.json'}, {out / 'eval.csv'} | ${cost:.3f}")
 
 
 if __name__ == "__main__":

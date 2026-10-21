@@ -21,6 +21,7 @@ from drape.texture import load_obj, mesh_name, vertex_labels  # noqa: E402
 
 SIZES = (2048, 4096)
 MIN_PERIOD_PX = 4.0
+MIN_FEATURE_PX = 2.0
 COLLAPSE_PX = 2.0
 
 
@@ -83,10 +84,38 @@ def atlas_scale(fits: dict[str, dict]) -> float:
     return float(np.median([f["s"] for f in fits.values()]))
 
 
-def pick_size(min_period_cm: float | None, s: float) -> int:
-    if min_period_cm and min_period_cm * SIZES[0] * s < MIN_PERIOD_PX:
+def features_cm(repeats: list) -> list[tuple[str, float]]:
+    """Every cm length the pattern has to draw: each set's repeat, its line, and each sub-band's line."""
+    out = []
+    for k, r in enumerate(repeats):
+        out.append((f"set{k}.period", float(r.period_cm)))
+        out.append((f"set{k}.line", float(r.line_width_cm)))
+        out += [(f"set{k}.sub{j}", float(b.width_cm)) for j, b in enumerate(r.sub_bands)]
+    return out
+
+
+def feature_floor(what: str) -> float:
+    return MIN_PERIOD_PX if what.endswith(".period") else MIN_FEATURE_PX
+
+
+def pick_size(features: list[tuple[str, float]], s: float) -> int:
+    """4096 as soon as 2048 cannot hold the finest thing the pattern draws, line width included."""
+    if any(cm * SIZES[0] * s < feature_floor(what) for what, cm in features):
         return SIZES[1]
     return SIZES[0]
+
+
+def verify_size(features: list[tuple[str, float]], size: int, s: float) -> tuple[list[str], dict]:
+    """px per feature at the chosen size: a line thinner than MIN_FEATURE_PX cannot survive the raster."""
+    bad, px_per = [], {}
+    for what, cm in features:
+        px = cm * size * s
+        px_per[what] = round(px, 2)
+        if px < feature_floor(what):
+            bad.append(f"{what} {cm}cm = {px:.2f}px at {size}, under {feature_floor(what)}px")
+    stats = {"size": size, "px_per_feature": px_per,
+             "finest_px": round(min(px_per.values()), 2) if px_per else None}
+    return bad, stats
 
 
 def texel_panels(uvs: np.ndarray, faces_vt: np.ndarray, face_panel: np.ndarray, size: int) -> tuple[np.ndarray, ...]:

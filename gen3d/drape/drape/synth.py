@@ -37,6 +37,9 @@ FOLD_MIN_CONC = 0.5
 CAP_SAFETY = 2.5
 CAP_FLOOR_DE = 4.0
 PHASE_MIN_SEAM_CM = 2.0
+PHASE_LOOP_GATE, PHASE_SPREAD_GATE = 0.15, 0.5
+LINE_ANGLE_GATE, LINE_SPACING_GATE, LINE_COUNT_SLACK = 0.5, 0.05, 1.5
+LINE_CONE, LINE_FLOOR, LINE_CONTRAST = math.cos(math.radians(30)), 0.05, 2.0
 TOL_FRAC, KEEP_FRAC, SPAN_FRAC = 0.07, 0.12, 0.45
 ROT_LIMIT, ROT_GATE, RATIO_MAX, MIN_SPREAD_CM, COVER_MIN, CHEST_FRAC = 2.5, 3.0, 2.2, 5.0, 0.5, 0.45
 CHEST_SLACK = 0.3
@@ -1612,27 +1615,42 @@ def synthesize(item_dir: Path, out_dir: Path, *, ppc: float = PPC, collapse_peri
 
 
 def line_metrics(ras: dict, p: dict, nrm: np.ndarray, period: float) -> dict:
-    """Angle of the rendered lines against the grain and their spacing, read back off the raster."""
+    """Angle and spacing of one set's rendered lines, read back off the raster by scanning along its own
+    normal: rows for a grain set, columns for a cross set, pixel steps projected onto `nrm` to give cm."""
     g = ras["rgb"].mean(-1)
     out: dict = {}
     if g.std() < 1.0:
         return out
+    axis = 0 if abs(nrm[0]) >= abs(nrm[1]) else 1
+    proj = abs(float(nrm[axis]))
+    if proj < 1e-6:
+        return out
     f = {"x0": ras["x0"], "y1": ras["y1"], "w": g.shape[1], "h": g.shape[0], "ppc": ras["ppc"]}
     keep = frame_mask(f, np.asarray(p["outline_cm"], float))
-    lines = (g > (g[keep].min() + g[keep].max()) / 2) & keep
     gy, gx = np.gradient(g)
     gx, gy = gx * keep, gy * keep
-    ang = 0.5 * math.atan2(2 * float((gx * gy).sum()), float((gx * gx).sum() - (gy * gy).sum()))
+    # a plaid draws every set into one raster, so only gradients inside this set's own cone are its lines
+    mag = np.hypot(gx, gy)
+    cone = (np.abs(gx * nrm[0] - gy * nrm[1]) > LINE_CONE * np.maximum(mag, 1e-9)) & (mag > LINE_FLOOR * mag.max())
+    out["cone_frac"] = round(float(cone[keep].mean()), 4)
+    if not cone.any():
+        return out
+    cx, cy = gx * cone, gy * cone
+    ang = 0.5 * math.atan2(2 * float((cx * cy).sum()), float((cx * cx).sum() - (cy * cy).sum()))
     grad = np.array([math.cos(ang), -math.sin(ang)])
     out["angle_err_deg"] = round(math.degrees(math.acos(min(abs(float(grad @ nrm)), 1.0))), 3)
     counts, spacing, cover = [], [], []
-    for r in (int(0.25 * g.shape[0]), int(0.75 * g.shape[0])):
-        rr = runs_of(lines[r])
+    for q in (int(0.25 * g.shape[axis]), int(0.75 * g.shape[axis])):
+        prof, kp = (g[q], keep[q]) if axis == 0 else (g[:, q], keep[:, q])
+        cover.append(round(float(kp.sum()) / ras["ppc"] * proj, 2))
+        # each scan line is thresholded on its own range: a tint darkens the hem past any raster-wide midpoint
+        lo, hi = (prof[kp].min(), prof[kp].max()) if kp.any() else (0.0, 0.0)
+        rr = runs_of((prof > (lo + hi) / 2) & kp) if hi - lo > LINE_CONTRAST else np.zeros((0, 2), int)
         counts.append(len(rr))
-        cover.append(round(float(keep[r].sum()) / ras["ppc"] * abs(nrm[0]), 2))
         if len(rr) >= 3:
             mid = (rr[:, 0] + rr[:, 1]) / 2
-            spacing.append(float(np.median(np.diff(mid)) / ras["ppc"] * abs(nrm[0])))
+            spacing.append(float(np.median(np.diff(mid)) / ras["ppc"] * proj))
+    out["scan"] = "rows" if axis == 0 else "cols"
     out["lines_top"], out["lines_bottom"] = counts[0], counts[1]
     out["cm_top"], out["cm_bottom"] = cover[0], cover[1]
     out["count_err"] = round(max(abs(c - w / period) for c, w in zip(counts, cover)), 2)
@@ -1642,7 +1660,7 @@ def line_metrics(ras: dict, p: dict, nrm: np.ndarray, period: float) -> dict:
     return out
 
 
-def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple[list[str], dict]:
+def verify_item(data: dict, spec: PatternSpec, res: dict) -> tuple[list[str], dict]:
     bad: list[str] = []
     info = res["meta"]
     stats: dict = {}
@@ -1663,8 +1681,9 @@ def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple
             bad.append(f"{name}: values out of 0..255")
 
     rg = info["register"]
-    if rg["probes"] and rg["fit_ratio"] > RATIO_MAX:
-        bad.append(f"registration scale ratio {rg['fit_ratio']:.2f}")
+    # the warp skews every panel it touches, print or not, so the fit is gated wherever one was accepted
+    if rg["accepted"] and rg["fit_ratio"] > RATIO_MAX:
+        bad.append(f"registration scale ratio {rg['fit_ratio']:.2f} over {RATIO_MAX}")
     # a leg lies at whatever angle the seller left it; only the upright torso fit is held to the tight gate
     gate = ROT_GATE if info["landmarks"]["mode"] in ("upright", "similarity", "prior") else 2 * ROT_GATE
     for pr in rg["probes"]:
@@ -1679,12 +1698,20 @@ def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple
 
     for k, s in enumerate(info["phase"]["sets"]):
         if not s.get("edges_scored"):
+            # with nothing scored the set carries no metrics at all, so a garment that has seams is unproven
+            if data["stitches"]:
+                bad.append(f"set {k}: 0 of {len(data['stitches'])} seams scored, phase unverified")
             continue
-        # spread is pure seam geometry (no offset fixes a seam that isn't square to the stripe); only a
-        # loop residual this large, or a non-finite value, means the LSQ itself broke rather than the cloth
-        if not math.isfinite(s["spread_worst"]) or not math.isfinite(s["loop_residual_worst"]) \
-                or s["loop_residual_worst"] > 0.5:
-            bad.append(f"set {k}: spread {s['spread_worst']:.3f} / loop residual {s['loop_residual_worst']:.3f}")
+        if not math.isfinite(s["spread_worst"]) or not math.isfinite(s["loop_residual_worst"]):
+            bad.append(f"set {k}: non-finite phase metrics")
+            continue
+        if s["loop_residual_worst"] > PHASE_LOOP_GATE:
+            bad.append(f"set {k}: loop residual {s['loop_residual_worst']:.3f} of a period at a seam "
+                       f"(over {PHASE_LOOP_GATE}), lines meet offset")
+        # no offset fixes a seam cut across the stripe, so spread is gated on its length-weighted mean
+        if s["spread_mean"] > PHASE_SPREAD_GATE:
+            bad.append(f"set {k}: along-seam spread mean {s['spread_mean']:.3f} of a period "
+                       f"(over {PHASE_SPREAD_GATE}), worst {s['spread_worst']:.3f} at {s.get('spread_at')}")
     stats["phase"] = [(s.get("loop_residual_worst", 0.0), s.get("spread_worst", 0.0), s["offsets_source"],
                        s.get("loop_residual_mean", 0.0)) for s in info["phase"]["sets"]]
 
@@ -1711,21 +1738,42 @@ def verify_item(data: dict, spec: PatternSpec, res: dict, stress: bool) -> tuple
     stats["trims"] = trims
 
     lines = []
-    for k, rep in enumerate(spec.repeats if len(spec.repeats) == 1 else []):
-        name = info["phase"]["root"]
-        nrm = set_normal(rep.direction, np.asarray(data["panels"][name]["grain_axis"], float))
+    name = info["phase"]["root"]
+    collapsed = set(info["collapsed"] or [])
+    # fallback mode quilts the photo over the drawn lines, so only a pattern render can be read back
+    drawn = info["mode"] == "pattern" and name in res["panels"]
+    normals = [set_normal(rep.direction, np.asarray(data["panels"][name]["grain_axis"], float))
+               for rep in spec.repeats]
+    for k, rep in enumerate(spec.repeats if drawn else []):
+        if k in collapsed:
+            continue
+        nrm = normals[k]
+        peers = [j for j, n in enumerate(normals) if j != k and abs(float(n @ nrm)) > 0.99]
+        alone = not peers and not rep.sub_bands
         mk = line_metrics(res["panels"][name], data["panels"][name], nrm, rep.period_cm)
         if not mk:
+            bad.append(f"set {k}: flat raster, no lines rendered")
             continue
+        mk["alone"] = alone
         lines.append((k, mk))
-        if stress:
-            if mk.get("angle_err_deg", 9) > 0.5:
-                bad.append(f"set {k}: line angle err {mk['angle_err_deg']:.2f} deg")
-            if mk.get("spacing_err", 1) > 0.05:
+        if "angle_err_deg" not in mk:
+            bad.append(f"set {k}: no gradient along its own direction, nothing rendered for it")
+            continue
+        if mk["angle_err_deg"] > LINE_ANGLE_GATE:
+            bad.append(f"set {k}: line angle err {mk['angle_err_deg']:.2f} deg off its {rep.direction.value}")
+        if alone:
+            if mk.get("spacing_err", 1) > LINE_SPACING_GATE:
                 bad.append(f"set {k}: spacing {mk.get('spacing_cm')} vs {rep.period_cm}")
-            if mk["count_err"] > 1.5:
+            if mk["count_err"] > LINE_COUNT_SLACK:
                 bad.append(f"set {k}: {mk['lines_top']}/{mk['lines_bottom']} lines over "
                            f"{mk['cm_top']}/{mk['cm_bottom']} cm, off by {mk['count_err']}")
+            continue
+        # the tint splits a shared axis's merged profile unevenly, so its count is reported, not gated
+        per_cm = sum((1 + len(spec.repeats[j].sub_bands)) / spec.repeats[j].period_cm for j in (k, *peers))
+        got, cov = (mk["lines_top"], mk["lines_bottom"]), (mk["cm_top"], mk["cm_bottom"])
+        mk["count_drawn"] = round(max(cov) * per_cm, 1)
+        if any(g_ < 1 and c > 1.0 for g_, c in zip(got, cov)):
+            bad.append(f"set {k}: {got[0]}/{got[1]} lines over {cov[0]}/{cov[1]} cm of cloth")
     stats["lines"] = lines
     return bad, stats
 
@@ -1760,13 +1808,15 @@ def main() -> None:
         res = synthesize(item_dir, out_dir, ppc=a.ppc, collapse_period_cm=a.collapse, spec=override)
         data = json.loads((out_dir / "panels.json").read_text())
         spec = override or PatternSpec.model_validate_json((item_dir / "spec.json").read_text())
-        bad, stats = verify_item(data, spec, res, override is not None)
+        bad, stats = verify_item(data, spec, res)
         info = res["meta"]
         ph = "-" if not stats["phase"] else " ".join(f"loop{t:.3f}/spread{sp:.2f}/{src}/mean{f:.3f}"
                                                      for t, sp, src, f in stats["phase"])
         tr = " ".join(f"{k}{v}" for k, v in stats["trims"][:2]) or "-"
-        ln = " ".join(f"s{k}:{v.get('angle_err_deg', '-')}deg/{v.get('spacing_cm', '-')}cm/"
-                      f"{v['lines_top']}in{v['cm_top']}cm>{v['lines_bottom']}in{v['cm_bottom']}cm"
+        ln = " ".join(f"s{k}:{v.get('scan', '-')}/{v.get('angle_err_deg', '-')}deg/{v.get('spacing_cm', '-')}cm/"
+                      f"{v.get('lines_top', '-')}in{v.get('cm_top', '-')}cm>"
+                      f"{v.get('lines_bottom', '-')}in{v.get('cm_bottom', '-')}cm"
+                      f"{'' if v.get('alone') else '~'}"
                       for k, v in stats["lines"]) or "-"
         rg = info["register"]
         shots = []
