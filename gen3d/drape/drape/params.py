@@ -39,8 +39,6 @@ NULLED = {"upper": ("meta.bottom",), "bottom": ("meta.upper",), "skirt": ("meta.
 # Neckline depth prior, in cm of front/back neck drop below the neck base.
 NECK_CM = {"crew": (7.0, 10.0), "scoop": (10.0, 14.0), "vneck": (12.0, 20.0), "hoodie": (6.0, 9.0)}
 BACK_NECK_CM = (1.5, 3.0)
-# collarless top categories get a rib neckband (Turtle, cm) so the sim neckline has structure to hold
-NECKBAND = {"tee": 2.5, "longsleeve": 2.5}
 SIZE_LADDER = ("XS", "S", "M", "L", "XL", "XXL")
 VNECK_SHAPES = {"VNeckHalf", "TrapezoidNeckHalf"}
 SCOOP_SHAPES = {"CurvyNeckHalf", "CircleArcNeckHalf", "Bezier2NeckHalf"}
@@ -229,11 +227,6 @@ def clamp_neckline(values: dict[str, Any], schema: dict[str, dict], slot: str, e
         verb = "CLAMP" if abs(got - want) <= 1e-3 else "UNREACHABLE"
         notes.append(f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({kind} {size or 'unsized'} {side} "
                      f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm)")
-    cat = (entry.get("category") or entry.get("role") or "").lower()
-    if kind != "hoodie" and cat in NECKBAND and _current(values, schema, "collar.component.style") is None:
-        values["collar.component.style"] = "Turtle"
-        values["collar.component.depth"] = NECKBAND[cat]
-        notes.append(f"NECKBAND collar.component.style null->Turtle depth {NECKBAND[cat]}cm")
     return notes
 
 
@@ -418,15 +411,23 @@ def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
     bl = bust_line()
     front, back = "collar.fc_depth", "collar.bc_depth"
     kind = neckline_kind(values, schema, entry)
+    meta_path = item_dir / "params_meta.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     was = {p: float(values[p]) for p in (front, back)}
     notes = clamp_neckline(values, schema, slot, entry)
+    # an earlier run injected a Turtle rib band into collarless tops; undo it where the log says we did
+    if values.get("collar.component.style") == "Turtle" and any(
+            n.startswith("NECKBAND") for n in meta.get("clamps") or []):
+        depth = schema["collar.component.depth"]["v"]
+        notes.append(f"STRIP NECKBAND collar.component.style Turtle->null, "
+                     f"depth {_fmt(values.get('collar.component.depth'))}->{_fmt(depth)}")
+        values["collar.component.style"] = None
+        values["collar.component.depth"] = depth
     for p in (front, back, "collar.component.style", "collar.component.depth"):
         if p in values:
             _set(tree, p, values[p])
     path.write_text(json.dumps(doc, indent=2))
 
-    meta_path = item_dir / "params_meta.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     meta["clamps"] = (meta.get("clamps") or []) + notes
     meta["reclamped"] = True
     meta_path.write_text(json.dumps(meta, indent=2))
