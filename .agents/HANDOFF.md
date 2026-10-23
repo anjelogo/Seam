@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-23 13:00 · anjelo · gen3d mannequin + tee collar drape
+- mannequin arm/trunk shoulder notch fixed (trunk shoulder row now meets the arm cap at every shoulders slider and pose; v3 widths/slopes, morph target names and anchors unchanged) — avatar + template GLBs and drape bodies re-exported AGAIN, so item textures still need the rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when this branch lands
+- tee drape defaults changed (branch anjelo/tee-collar): collarless tops (tee, longsleeve) get a 2.5 cm rib neckband from the params prior plus a vertical neckline hold + ×4 neck stiffness in the sim, keyed by category — tees now sit on the shoulder points (were 5–12 cm low); hoodies/collared shirts untouched; numbers in gen3d/drape/RESULTS_TEE_COLLAR.md and COLLAR_GRID.md
+- action needed: none (gen3d drape only; nothing wired into prod)
+
 ## 2026-10-21 17:05 · anjelo · gen3d mannequin + drape texture v3
 - mannequin shoulders widened/flattened to GarmentCode's mean (masc 36.5 cm @ 22.0°, fem scaled by the same ratio; assets/avatar_*.glb, template GLBs and anchors.json re-exported, morph target names unchanged) — the web avatar GLB is new and item textures need a rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when branch anjelo/texture-v3 lands
 - drape texture v3 (same branch): neckline depth prior (params --reclamp), seam-true tint/back-seed, LSQ stripe phase + collar/hood frames, sub-bands/line-trims/leg-logo spec fields, underarm smear fix, retuned twill/jersey normals, honest verify gates, 3-pass eval — 12-item judge v3 1.50 vs v2 1.34 vs legacy 1.01, details in gen3d/drape/RESULTS_TEXTURE_V3.md

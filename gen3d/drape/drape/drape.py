@@ -39,6 +39,8 @@ COLLAR_LABELS = ("right_collar", "left_collar")
 NECK_BAND_CM = 1.5
 # off by default: every knob below is a no-op until a flag sets it
 NECK = {"hold": "none", "stiff": None, "dump": None, "cloth": None}
+# collarless top categories drape with the rib neckband held at the neck (flags still override)
+NECK_DEFAULT = {"tee": {"hold": "ring", "stiff": 4.0}, "longsleeve": {"hold": "ring", "stiff": 4.0}}
 
 # material keys SimConfig actually reads, baselined on default_sim_props.yaml
 PRESETS = {
@@ -377,8 +379,8 @@ def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str |
 
 
 def flag_record(args) -> dict:
-    return {"flags": {"arm_pose": args.arm_pose, "preset": args.preset, "neck_hold": args.neck_hold,
-                      "neck_stiff": args.neck_stiff, "release_frame": args.release_frame,
+    return {"flags": {"arm_pose": args.arm_pose, "preset": args.preset, "neck_hold": NECK["hold"],
+                      "neck_stiff": NECK["stiff"], "release_frame": args.release_frame,
                       "dump_every": args.dump_every}}
 
 
@@ -447,8 +449,9 @@ def main() -> None:
     ap.add_argument("--arm-pose", "--pose-deg", type=float, default=None,
                     help="arms deg from vertical (default: A-pose on tops)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="material preset; overrides the --material mapping")
-    ap.add_argument("--neck-hold", choices=("none", "ring", "points"), default="none",
-                    help="hold the neckline above the neck base instead of upstream's sideways pin")
+    ap.add_argument("--neck-hold", choices=("none", "ring", "points"), default=None,
+                    help="hold the neckline above the neck base instead of upstream's sideways pin "
+                         "(default: per category, tees/longsleeves ring)")
     ap.add_argument("--neck-stiff", type=float, default=None,
                     help=f"stiffness factor for faces within {NECK_BAND_CM} cm of the neckline")
     ap.add_argument("--release-frame", type=int, default=None, help="frame that releases all attachments")
@@ -466,7 +469,7 @@ def main() -> None:
     ap.add_argument("--experiment", choices=["sizes", "layers"])
     args = ap.parse_args()
 
-    NECK.update(hold=args.neck_hold, stiff=args.neck_stiff, dump=args.dump_every)
+    NECK.update(hold=args.neck_hold or "none", stiff=args.neck_stiff, dump=args.dump_every)
     props_kw = dict(res=args.res, max_steps=args.max_steps, attachment=not args.no_attachment,
                     frame_timeout=args.frame_timeout, body_friction=args.body_friction,
                     preset=args.preset, release_frame=args.release_frame)
@@ -493,12 +496,15 @@ def main() -> None:
                 kind = pattern_mod.slot_kind(it)
                 pose = POSE[kind] if args.arm_pose is None else args.arm_pose
                 hold = HOLD[kind] if args.hold == "auto" else args.hold == "on"
+                nd = NECK_DEFAULT.get((it.get("category") or "").lower(), {})
+                NECK.update(hold=args.neck_hold if args.neck_hold is not None else nd.get("hold", "none"),
+                            stiff=args.neck_stiff if args.neck_stiff is not None else nd.get("stiff"))
                 spec_dir, name, sim_body = ensure_pattern(args.inputs, args.bodies, args.out, it["safe"], args.size,
                                                           args.wearer, pose=pose, role=it.get("role"), base=args.base)
                 props = load_props(**props_kw, material=it.get("material"), hold=hold)
                 cfg = props["sim"]["config"]
-                print(f"{it['safe']}: {kind}, body {sim_body}, attachments held to frame "
-                      f"{cfg['options']['attachment_frames']} of {cfg['max_sim_steps']}")
+                print(f"{it['safe']}: {kind}, body {sim_body}, neck {NECK['hold']}/{NECK['stiff'] or '-'}, "
+                      f"attachments held to frame {cfg['options']['attachment_frames']} of {cfg['max_sim_steps']}")
                 drape_one(spec_dir, name, sim_body, args.out / it["safe"] / "sim", props, timings, it["safe"],
                           boxmesh_only=args.boxmesh_only, extra=flag_record(args))
     finally:
