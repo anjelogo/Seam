@@ -10,6 +10,52 @@ from drape._repo import bootstrap, DRAPE
 bootstrap()
 
 TOP_SLOTS = {"top", "outer", "onepiece"}
+# a real rib neckband is cut shorter than the neck hole and stretched on; GarmentCode drafts it 1:1
+NECKBAND_RATIO = 0.85
+
+
+def _stretch_on_neckband() -> None:
+    from assets.garment_programs import collars
+    from assets.garment_programs.bands import StraightBandPanel
+
+    turtle_init, band_init = collars.Turtle.__init__, StraightBandPanel.__init__
+
+    def short_band(self, name, width, depth, match_int_proportion=None):
+        band_init(self, name, width * NECKBAND_RATIO, depth, match_int_proportion)
+
+    def turtle(self, tag, body, design):
+        StraightBandPanel.__init__ = short_band
+        try:
+            turtle_init(self, tag, body, design)
+        finally:
+            StraightBandPanel.__init__ = band_init
+
+    collars.Turtle.__init__ = turtle
+
+
+_stretch_on_neckband()
+
+
+def band_vs_neckline(spec: dict) -> tuple[float, float]:
+    """True arc lengths of the neckband edges and of the bodice neckline they are stitched to."""
+    import numpy as np
+
+    from drape.panels import edge_curve
+
+    panels, band, neck = spec["pattern"]["panels"], 0.0, 0.0
+    for stitch in spec["pattern"]["stitches"]:
+        sides = [s for s in stitch if isinstance(s, dict)]
+        names = [s["panel"] for s in sides]
+        if not (any("collar" in n for n in names) and any("torso" in n for n in names)):
+            continue
+        for side in sides:
+            p = panels[side["panel"]]
+            length = edge_curve(p["edges"][side["edge"]], np.asarray(p["vertices"], float))[1]
+            if "collar" in side["panel"]:
+                band += length
+            else:
+                neck += length
+    return band, neck
 # stress bottoms: narrow leg + taper, by manifest role
 STRESS = {
     "legging": {"pants.width": 1.0, "pants.flare": 0.5},
@@ -80,6 +126,9 @@ def build_pattern(safe: str, design: dict, body_yaml: Path, out_dir: Path, name:
     body = BodyParameters(str(body_yaml))
     garment = MetaGarment(name, body, design)
     pattern = garment.assembly()
+    band, neck = band_vs_neckline(pattern.spec if hasattr(pattern, "spec") else pattern())
+    if band:
+        print(f"neckband {name}: {band:.2f} cm on a {neck:.2f} cm neckline (band/neck {band / neck:.3f})")
     if garment.is_self_intersecting():
         print(f"WARNING: {name} pattern is self-intersecting")
     out_dir.mkdir(parents=True, exist_ok=True)
