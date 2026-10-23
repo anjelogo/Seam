@@ -12,7 +12,9 @@ import numpy as np
 import trimesh
 import yaml
 from app.mannequin import generator
-from app.mannequin.generator import ARM, LAYOUT, TRUNK, body_mesh, leg_ring_at, split
+from app.mannequin.generator import (
+    ARM, LAYOUT, N_TRUNK, TRUNK, body_mesh, leg_ring_at, split, trunk_section,
+)
 from app.mannequin.params import SLIDERS, STATIONS, body_params
 
 from drape._repo import RUNS
@@ -96,6 +98,18 @@ def _arc_down(col: np.ndarray, i_bottom: int, y_top: float) -> float:
     return _length(np.vstack([col[i_bottom : i + 1], col[i] + t * (col[i + 1] - col[i])]))
 
 
+def _pit_y(p: dict, arm: np.ndarray, sc: np.ndarray) -> float:
+    """Bottom of the underarm pit: the lowest arm vertex still inside the trunk surface."""
+    v = arm.reshape(-1, 3) / sc
+    v = v[v[:, 1] > p["torso"][3, 0]]
+    ys = []
+    for x, y, z in v:
+        a, bf, bb, zc, ex = trunk_section(p, y)
+        if abs(x / a) ** ex + abs((z - zc) / (bf if z >= zc else bb)) ** ex < 1.0:
+            ys.append(y)
+    return min(ys) * sc[1]
+
+
 def measure(base: str, sliders: dict | None = None) -> dict[str, float]:
     verts, faces = body_mesh(base, sliders)
     p = body_params(base, sliders)
@@ -111,10 +125,13 @@ def measure(base: str, sliders: dict | None = None) -> dict[str, float]:
     i_bust = int(np.abs(ys - p["lobe"][1] * sc[1]).argmin())
     y_bust = float(ys[i_bust])
 
-    shoulder = arm.reshape(-1, 3)[int(arm[:, :, 1].argmax())]
-    sh_x, sh_y = float(shoulder[0]), float(shoulder[1])
+    # GarmentCode measures off the acromion and the nape; the arm cap's apex moves with the pose
+    ring_sh = trunk[TRUNK["shoulder"]]
+    sh_x, sh_y = float(ring_sh[:, 0].max()), float(ring_sh[0, 1])
     neck = trunk[TRUNK["neckbase"]]
     neck_pt = neck[int(neck[:, 0].argmax())]
+    nape_y = float(neck[0, 1])
+    pit_y = _pit_y(p, arm, sc)
 
     cut = {n: _outline(torso, at[n]) for n in ("hip", "waist", "underbust")}
     cut["bust"] = _outline(torso, y_bust)
@@ -129,14 +146,14 @@ def measure(base: str, sliders: dict | None = None) -> dict[str, float]:
     m = {
         "arm_length": float(np.linalg.norm(reach)) * M,
         "arm_pose_angle": float(np.degrees(np.arctan2(abs(reach[1]), abs(reach[0])))),
-        "armscye_depth": (sh_y - at["armpit"]) * M,
+        "armscye_depth": (sh_y - pit_y) * M,
         "back_width": _back_arc(cut["bust"]) * M,
         "bum_points": _rear_span(cut["hip"]) * M,
         "bust": _girth(cut["bust"]) * M,
         "bust_line": _arc_down(apex, i_bust, sh_y) * M,
         "bust_points": 2 * abs(float(apex[i_bust, 0])) * M,
         "crotch_hip_diff": (at["hip"] - float(p["crotch"] * sc[1])) * M,
-        "head_l": (height - sh_y) * M,
+        "head_l": (height - nape_y) * M,
         "height": height * M,
         "hip_back_width": _back_arc(cut["hip"]) * M,
         "hip_inclination": float(np.degrees(np.arctan2(
@@ -148,11 +165,12 @@ def measure(base: str, sliders: dict | None = None) -> dict[str, float]:
         "shoulder_incl": float(np.degrees(np.arctan2(neck_pt[1] - sh_y, sh_x - neck_pt[0]))),
         "shoulder_w": 2 * sh_x * M,
         "underbust": _girth(cut["underbust"]) * M,
-        "vert_bust_line": (sh_y - y_bust) * M,
+        "vert_bust_line": (nape_y - y_bust) * M,
         "waist": _girth(cut["waist"]) * M,
         "waist_back_width": _back_arc(cut["waist"]) * M,
-        "waist_line": (sh_y - at["waist"]) * M,
-        "waist_over_bust_line": _arc_down(apex, TRUNK["waist"], sh_y) * M,
+        "waist_line": _arc_down(trunk[:, N_TRUNK // 2], TRUNK["waist"], nape_y) * M,
+        # a vertical tape from the nape, so it leaves the surface above the shoulder
+        "waist_over_bust_line": (_arc_down(apex, TRUNK["waist"], sh_y) + nape_y - sh_y) * M,
         "wrist": _girth(wrist) * M,
     }
     return {k: round(float(m[k]), 4) for k in KEYS}
