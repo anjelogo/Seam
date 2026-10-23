@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+import yaml
+
 from drape._repo import bootstrap, GC, DRAPE
 
 bootstrap()
@@ -19,6 +21,10 @@ from pygarment.meshgen.sim_config import PathCofig
 sim_mod.render_images = lambda *a, **k: None
 
 from pygarment.meshgen import boxmeshgen as boxmeshgen_mod
+from pygarment.meshgen.garment import Cloth
+
+# importing warp any earlier than pygarment reorders the pattern's panels
+from warp.sim import ModelBuilder
 
 # upstream warning at boxmeshgen.py:458 crashes on missing Edge.name
 if not hasattr(boxmeshgen_mod.Edge, "name"):
@@ -29,16 +35,143 @@ A_POSE_DEG = 45.0
 POSE = {"top": A_POSE_DEG, "bottom": 0.0}
 HOLD = {"top": True, "bottom": True}
 
-PRESET_FILES = {
-    "soft_flexy": "soft_flexy_ochra 30s.json",
-    "soft": "soft_ochra.json",
-    "stiff": "stiff_ochra.json",
+COLLAR_LABELS = ("right_collar", "left_collar")
+NECK_BAND_CM = 1.5
+# off by default: every knob below is a no-op until a flag sets it
+NECK = {"hold": "none", "stiff": None, "dump": None, "cloth": None}
+
+# material keys SimConfig actually reads, baselined on default_sim_props.yaml
+PRESETS = {
+    "stiff": {"garment_tri_ke": 20000.0, "garment_tri_ka": 20000.0, "garment_edge_ke": 50.0},
+    "soft": {"garment_edge_ke": 0.5},
+    "jersey": {"garment_tri_ke": 5000.0, "garment_tri_ka": 5000.0, "garment_edge_ke": 0.5},
 }
+PRESETS["soft_flexy"] = PRESETS["jersey"]
 MATERIAL_PRESET = {
     "denim": "stiff", "canvas": "stiff", "leather": "stiff", "corduroy": "stiff",
-    "fleece": "soft_flexy", "jersey": "soft_flexy", "cotton jersey": "soft_flexy", "knit": "soft_flexy",
+    "fleece": "jersey", "jersey": "jersey", "cotton jersey": "jersey", "knit": "jersey",
     "cotton": "soft", "polyester": "soft", "wool": "soft", "nylon": "soft",
 }
+MATERIAL_USED: dict = {}
+
+
+def neck_band_faces(verts, faces, neck_ids, radius: float = NECK_BAND_CM) -> list[int]:
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    v, f = np.asarray(verts, dtype=float), np.asarray(faces)
+    if not len(neck_ids) or not len(f):
+        return []
+    near = cKDTree(v[list(neck_ids)]).query(v)[0] <= radius
+    return np.flatnonzero(near[f].any(axis=1)).tolist()
+
+
+def neck_point_subset(verts, ids: list[int]) -> list[int]:
+    """The neck-base and shoulder end of the front and of the back neckline, 3 vertices each."""
+    import numpy as np
+
+    v = np.asarray(verts, dtype=float)[ids]
+    keep = set()
+    # boxmesh panels are laid out front/back along z, so the median splits the two neckline edges
+    mid = np.median(v[:, 2])
+    for panel in (np.flatnonzero(v[:, 2] >= mid), np.flatnonzero(v[:, 2] < mid)):
+        if not len(panel):
+            continue
+        x = np.abs(v[panel, 0])
+        for end in (panel[x.argmin()], panel[x.argmax()]):
+            for j in np.argsort(np.linalg.norm(v - v[end], axis=1))[:3]:
+                keep.add(ids[int(j)])
+    return sorted(keep)
+
+
+_box_save_labels = boxmeshgen_mod.BoxMesh.save_vertex_labels
+_cloth_attach = Cloth._add_attachment_labels
+_cloth_build = Cloth.build_stage
+_cloth_update = Cloth.update
+_add_cloth_mesh = ModelBuilder.add_cloth_mesh_sewing_spring
+
+
+# --neck-hold points: upstream labels the whole neckline ring, keep only its ends
+def _save_vertex_labels(self):
+    if NECK["hold"] == "points":
+        for label in COLLAR_LABELS:
+            ids = self.vertex_labels.get(label)
+            if ids:
+                self.vertex_labels[label] = neck_point_subset(self.vertices, ids)
+    _box_save_labels(self)
+
+
+# --neck-hold: upstream pins the collar sideways, hold it above the neck base instead
+def _add_attachment_labels(self, builder, config):
+    if NECK["hold"] == "none":
+        return _cloth_attach(self, builder, config)
+    import numpy as np
+    import warp as wp
+
+    names = list(config.attachment_labels)
+    config.attachment_labels = [n for n in names if n not in COLLAR_LABELS]
+    _cloth_attach(self, builder, config)
+    config.attachment_labels = names
+    labels = yaml.safe_load(Path(self.paths.g_vert_labels).read_text()) or {}
+    for name in COLLAR_LABELS:
+        ids = labels.get(name) or []
+        if not ids or name not in names:
+            continue
+        i = names.index(name)
+        # slack below the neckline's own rest height: it may ride up, not drop
+        level = float(np.asarray(self.v_cloth_init)[ids][:, 1].min()) - 0.5
+        builder.add_attachment(
+            ids, wp.vec3(0.0, level, 0.0), wp.vec3(0.0, 1.0, 0.0),
+            stiffness=config.attachment_stiffness[i], damping=config.attachment_damping[i],
+        )
+        config.enable_attachment_constraint = True
+        print(f"neck-hold {NECK['hold']}: {name} {len(ids)} verts held above y={level:.2f}")
+    config.update_min_steps()
+
+
+def _build_stage(self, config):
+    NECK["cloth"] = self
+    _cloth_build(self, config)
+
+
+# --neck-stiff: warp takes per-triangle stiffness, raise it in the neckline band only
+def _add_cloth_mesh_sewing_spring(self, *a, **kw):
+    n0 = len(self.tri_indices)
+    out = _add_cloth_mesh(self, *a, **kw)
+    cloth, factor = NECK["cloth"], NECK["stiff"]
+    if not factor or cloth is None:
+        return out
+    labels = yaml.safe_load(Path(cloth.paths.g_vert_labels).read_text()) or {}
+    ids = sorted({v for n in COLLAR_LABELS for v in (labels.get(n) or [])})
+    tris = self.tri_indices[n0:]
+    hit = neck_band_faces(self.particle_q, tris, ids)
+    for i in hit:
+        ke, ka, kd, drag, lift = self.tri_materials[n0 + i]
+        self.tri_materials[n0 + i] = (ke * factor, ka * factor, kd, drag, lift)
+    print(f"neck-stiff {factor}x: {len(hit)} of {len(tris)} faces in the {NECK_BAND_CM} cm neckline band")
+    return out
+
+
+# --dump-every: cloth vertex positions per N frames, for the slide-frame metric
+def _update(self, frame):
+    _cloth_update(self, frame)
+    every = NECK["dump"]
+    if not every or frame < 0 or frame % every:
+        return
+    import numpy as np
+
+    d = Path(self.paths.out)
+    d.mkdir(parents=True, exist_ok=True)
+    if not (d / "dump_faces.npy").exists():
+        np.save(d / "dump_faces.npy", np.asarray(self.f_cloth))
+    np.save(d / f"dump_f{frame:05d}.npy", np.asarray(self.current_verts))
+
+
+boxmeshgen_mod.BoxMesh.save_vertex_labels = _save_vertex_labels
+Cloth._add_attachment_labels = _add_attachment_labels
+Cloth.build_stage = _build_stage
+Cloth.update = _update
+ModelBuilder.add_cloth_mesh_sewing_spring = _add_cloth_mesh_sewing_spring
 
 
 class VramSampler:
@@ -73,7 +206,8 @@ class VramSampler:
 
 
 def load_props(res: float | None, max_steps: int | None, attachment: bool, material: str | None,
-               frame_timeout: int | None, hold: bool = False, body_friction: float | None = None):
+               frame_timeout: int | None, hold: bool = False, body_friction: float | None = None,
+               preset: str | None = None, release_frame: int | None = None):
     props = data_config.Properties(str(GC / "assets/Sim_props/default_sim_props.yaml"))
     props.set_section_stats("sim", fails={}, sim_time={}, spf={}, fin_frame={}, body_collisions={}, self_collisions={})
     props.set_section_stats("render", render_time={})
@@ -87,19 +221,23 @@ def load_props(res: float | None, max_steps: int | None, attachment: bool, mater
     if hold:
         # upstream releases the attachments at frame 400 and the garment slides off our mannequin
         cfg["options"]["attachment_frames"] = cfg["max_sim_steps"] + 1
+    if release_frame is not None:
+        cfg["options"]["attachment_frames"] = release_frame
     if body_friction is not None:
         cfg["options"]["body_friction"] = body_friction
     # upstream frame timeout no-ops on Darwin (platform name mismatch skips the frame entirely)
     cfg["max_frame_time"] = None if platform.system() == "Darwin" else frame_timeout or cfg.get("max_frame_time")
-    preset = MATERIAL_PRESET.get((material or "").lower())
-    if preset:
-        try:
-            raw = json.loads((GC / "assets/Sim_props" / PRESET_FILES[preset]).read_text())
-            mat = raw.get("sim", {}).get("config", {}).get("material", raw.get("material", {}))
-            cfg["material"].update(mat or {})
-            print(f"material preset: {preset} ({material})")
-        except Exception as e:
-            print(f"material preset {preset} failed ({e}); using defaults")
+    tag = (material or "").lower().strip().replace("_", " ")
+    name = preset or MATERIAL_PRESET.get(tag)
+    mat = PRESETS.get(name or "")
+    if mat:
+        cfg["material"].update(mat)
+    elif name:
+        print(f"material preset {name} unknown; using defaults")
+        name = None
+    MATERIAL_USED.clear()
+    MATERIAL_USED.update(tag=tag or None, preset=name, values=dict(mat or {}))
+    print(f"material {tag or 'untagged'}: preset {name} {mat or {}}")
     props["render"]["config"]["uv_texture"]["fabric_grain_texture_path"] = str(GC / "assets/img/fabric_texture.png")
     return props
 
@@ -111,7 +249,7 @@ def warp_device() -> str:
 
 
 def drape_one(spec_dir: Path, name: str, wearer: str, out_dir: Path, props, timings: list, item: str = "",
-              boxmesh_only: bool = False) -> Path:
+              boxmesh_only: bool = False, extra: dict | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = PathCofig(
         in_element_path=str(spec_dir),
@@ -126,10 +264,20 @@ def drape_one(spec_dir: Path, name: str, wearer: str, out_dir: Path, props, timi
     box.load()
     box.serialize(paths, store_panels=True, uv_config=props["render"]["config"]["uv_texture"])
     meshgen_s = round(time.time() - t0, 2)
+    rec_extra = {**(extra or {}), "material": dict(MATERIAL_USED)}
+    labels = yaml.safe_load(Path(paths.g_vert_labels).read_text()) if Path(paths.g_vert_labels).exists() else {}
+    labels = labels or {}
+    rec_extra["label_verts"] = {k: len(v) for k, v in labels.items()}
+    if NECK["stiff"]:
+        ids = sorted({v for n in COLLAR_LABELS for v in (labels.get(n) or [])})
+        hit = len(neck_band_faces(box.vertices, box.faces, ids))
+        rec_extra["neck_stiff_faces"] = hit
+        print(f"neck-stiff {NECK['stiff']}x: {hit} of {len(box.faces)} faces in the {NECK_BAND_CM} cm neckline band")
     if boxmesh_only:
         print(f"BOXMESH {name}: {paths.g_box_mesh} ({meshgen_s}s, sim skipped)")
         timings.append({"item": item, "name": name, "body": wearer, "meshgen_s": meshgen_s, "sim_s": None,
-                        "resolution_scale": props["sim"]["config"]["resolution_scale"], "boxmesh_only": True})
+                        "resolution_scale": props["sim"]["config"]["resolution_scale"], "boxmesh_only": True,
+                        **rec_extra})
         return paths.g_box_mesh
     t1 = time.time()
     with VramSampler() as vram:
@@ -146,6 +294,7 @@ def drape_one(spec_dir: Path, name: str, wearer: str, out_dir: Path, props, timi
         "self_collisions": stats["self_collisions"].get(box.name),
         "fails": {k: v for k, v in stats["fails"].items() if box.name in (v if isinstance(v, list) else [])},
         "vram_mb": vram.peak, "device": warp_device(),
+        **rec_extra,
     }
     timings.append(rec)
     print(f"DRAPE {name} on {wearer}: sim {sim_s}s, frames {rec['frames']}, fails {rec['fails'] or 'none'}")
@@ -227,6 +376,12 @@ def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str |
     return spec.parent, name, sim_body
 
 
+def flag_record(args) -> dict:
+    return {"flags": {"arm_pose": args.arm_pose, "preset": args.preset, "neck_hold": args.neck_hold,
+                      "neck_stiff": args.neck_stiff, "release_frame": args.release_frame,
+                      "dump_every": args.dump_every}}
+
+
 def experiment_sizes(args, props_kw: dict, timings: list):
     items = manifest_items(args.inputs)
     hoodie = find_by_role(items, "hoodie", "sweatshirt")
@@ -236,7 +391,7 @@ def experiment_sizes(args, props_kw: dict, timings: list):
         spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], size, args.wearer)
         props = load_props(**props_kw, material=hoodie.get("material"))
         drape_one(spec_dir, name, args.wearer, args.out / hoodie["safe"] / f"sim_size_{size}", props, timings,
-                  hoodie["safe"], boxmesh_only=args.boxmesh_only)
+                  hoodie["safe"], boxmesh_only=args.boxmesh_only, extra=flag_record(args))
 
 
 def experiment_layers(args, props_kw: dict, timings: list):
@@ -247,7 +402,8 @@ def experiment_layers(args, props_kw: dict, timings: list):
         raise SystemExit("layer test needs a tee and a hoodie in inputs")
     spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, tee["safe"], None, args.wearer)
     props = load_props(**props_kw, material=tee.get("material"))
-    tee_obj = drape_one(spec_dir, name, args.wearer, args.out / tee["safe"] / "sim_layer_base", props, timings, tee["safe"])
+    tee_obj = drape_one(spec_dir, name, args.wearer, args.out / tee["safe"] / "sim_layer_base", props, timings,
+                        tee["safe"], extra=flag_record(args))
     if not tee_obj.exists():
         raise SystemExit("tee drape failed; cannot layer")
 
@@ -273,7 +429,8 @@ def experiment_layers(args, props_kw: dict, timings: list):
         seg_path.write_text(json.dumps(seg))
         spec_dir, name, _ = ensure_pattern(args.inputs, args.bodies, args.out, hoodie["safe"], None, args.wearer)
         props = load_props(**props_kw, material=hoodie.get("material"))
-        drape_one(spec_dir, name, merged_name, args.out / hoodie["safe"] / "sim_layered", props, timings, hoodie["safe"])
+        drape_one(spec_dir, name, merged_name, args.out / hoodie["safe"] / "sim_layered", props, timings,
+                  hoodie["safe"], extra=flag_record(args))
     finally:
         seg_path.write_text(backup)
 
@@ -287,7 +444,15 @@ def main() -> None:
     ap.add_argument("--base", default="masc", choices=("masc", "fem"), help="mannequin base of --wearer, for posing it")
     ap.add_argument("--only")
     ap.add_argument("--size")
-    ap.add_argument("--arm-pose", type=float, default=None, help="arms deg from vertical (default: A-pose on tops)")
+    ap.add_argument("--arm-pose", "--pose-deg", type=float, default=None,
+                    help="arms deg from vertical (default: A-pose on tops)")
+    ap.add_argument("--preset", choices=sorted(PRESETS), help="material preset; overrides the --material mapping")
+    ap.add_argument("--neck-hold", choices=("none", "ring", "points"), default="none",
+                    help="hold the neckline above the neck base instead of upstream's sideways pin")
+    ap.add_argument("--neck-stiff", type=float, default=None,
+                    help=f"stiffness factor for faces within {NECK_BAND_CM} cm of the neckline")
+    ap.add_argument("--release-frame", type=int, default=None, help="frame that releases all attachments")
+    ap.add_argument("--dump-every", type=int, default=None, help="dump cloth vertex positions every N sim frames")
     ap.add_argument("--hold", choices=("auto", "on", "off"), default="auto", help="hold attachments for the whole sim")
     ap.add_argument("--body-friction", type=float, default=None, help="cloth-body friction (upstream default 0.5)")
     ap.add_argument("--res", type=float, default=None)
@@ -301,8 +466,10 @@ def main() -> None:
     ap.add_argument("--experiment", choices=["sizes", "layers"])
     args = ap.parse_args()
 
+    NECK.update(hold=args.neck_hold, stiff=args.neck_stiff, dump=args.dump_every)
     props_kw = dict(res=args.res, max_steps=args.max_steps, attachment=not args.no_attachment,
-                    frame_timeout=args.frame_timeout, body_friction=args.body_friction)
+                    frame_timeout=args.frame_timeout, body_friction=args.body_friction,
+                    preset=args.preset, release_frame=args.release_frame)
     timings: list = []
     args.out.mkdir(parents=True, exist_ok=True)
     try:
@@ -314,7 +481,8 @@ def main() -> None:
             if not args.name:
                 raise SystemExit("--spec requires --name")
             props = load_props(**props_kw, material=args.material, hold=args.hold == "on")
-            drape_one(args.spec, args.name, args.wearer, args.out, props, timings, args.name, boxmesh_only=args.boxmesh_only)
+            drape_one(args.spec, args.name, args.wearer, args.out, props, timings, args.name,
+                      boxmesh_only=args.boxmesh_only, extra=flag_record(args))
         else:
             from drape import pattern as pattern_mod
 
@@ -332,7 +500,7 @@ def main() -> None:
                 print(f"{it['safe']}: {kind}, body {sim_body}, attachments held to frame "
                       f"{cfg['options']['attachment_frames']} of {cfg['max_sim_steps']}")
                 drape_one(spec_dir, name, sim_body, args.out / it["safe"] / "sim", props, timings, it["safe"],
-                          boxmesh_only=args.boxmesh_only)
+                          boxmesh_only=args.boxmesh_only, extra=flag_record(args))
     finally:
         if timings:
             save_timings(args.out, timings)
