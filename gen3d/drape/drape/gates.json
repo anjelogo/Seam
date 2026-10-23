@@ -1,0 +1,12 @@
+{
+  "cap_coverage_min": 0.95,
+  "cover_dist_cm": 2.0,
+  "armhole_dist_cm": 5.0,
+  "sleeve_hem_tol_cm": 3.0,
+  "sleeve_dlr_cm": 1.5,
+  "neck_ring_pct": 12,
+  "pen_pct": 0.1,
+  "sim_time_x": 2.0,
+  "strap_width_cm": 4.0,
+  "coverage_guard_pct": 3
+}

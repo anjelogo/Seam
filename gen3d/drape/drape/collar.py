@@ -279,6 +279,10 @@ def main() -> None:
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps({"out": str(args.out), "band_cm": BAND_CM, "items": rows}, indent=2) + "\n")
     print(f"\n{len(rows)} top{'s' if len(rows) != 1 else ''} -> {sidecar}")
+    gates = args.out / "coverage_metrics.json"
+    if gates.exists():
+        failed = json.loads(gates.read_text()).get("failed") or {}
+        print(f"shoulder-coverage gates: {len(failed)} failing{' (' + ', '.join(failed) + ')' if failed else ''} -> {gates}")
 
 
 if __name__ == "__main__":
