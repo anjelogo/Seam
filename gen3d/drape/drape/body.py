@@ -228,14 +228,20 @@ def main() -> None:
     ap.add_argument("--name", default=None)
     ap.add_argument("--sliders", default=None, help="key=val,... (defaults 0.5)")
     ap.add_argument("--target-height-cm", type=float, default=None)
+    ap.add_argument("--pose", type=float, default=None, help="arm degrees from vertical; measurements come from the unposed wearer")
     args = ap.parse_args()
 
     sliders = parse_sliders(args.sliders)
     if args.target_height_cm:
         sliders["height"] = solve_height(args.base, sliders, args.target_height_cm)
         print(f"height slider -> {sliders['height']:.4f}")
-    name = args.name or f"wearer_{args.base}"
-    body = export(args.base, sliders, name)
+    wearer = f"wearer_{args.base}"
+    if args.pose is None:
+        name = args.name or wearer
+        body = export(args.base, sliders, name)
+    else:
+        name = args.name or f"{wearer}_a{round(args.pose)}"
+        body = export_pose(args.base, sliders, wearer, args.pose, name)
     print(f"wrote {BODIES}/{name}.obj, {name}.yaml, {SEG_FILE}")
     for key, val in body.items():
         print(f"  {key:22s} {val:8.2f}")
