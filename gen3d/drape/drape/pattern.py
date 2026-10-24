@@ -36,6 +36,53 @@ def _stretch_on_neckband() -> None:
 _stretch_on_neckband()
 
 
+def _ring_neckband(spec: dict) -> list[str]:
+    """Turtle band halves are rectangles whose chords meet at CF as a notch; recut each as an arc of its neckline."""
+    import numpy as np
+
+    from drape.panels import edge_curve
+
+    panels, notes = spec["pattern"]["panels"], []
+    for stitch in spec["pattern"]["stitches"]:
+        sides = [s for s in stitch if isinstance(s, dict)]
+        names = [s["panel"] for s in sides]
+        if not (any("collar" in n for n in names) and any("torso" in n for n in names)):
+            continue
+        torso = next(s for s in sides if "torso" in s["panel"])
+        band = next(s for s in sides if "collar" in s["panel"])
+        bp, tp = panels[band["panel"]], panels[torso["panel"]]
+        if len(bp["edges"]) != 4 or any(e.get("curvature") for e in bp["edges"]):
+            continue
+        neck = tp["edges"][torso["edge"]].get("curvature") or {}
+        if neck.get("type") != "circle":
+            continue
+        rad = float(neck["params"][0])
+        arc = edge_curve(bp["edges"][band["edge"]], np.asarray(bp["vertices"], float))[1]
+        verts = np.asarray(bp["vertices"], float)
+        seam = bp["edges"][band["edge"]]["endpoints"]
+        sides = [set(e["endpoints"]) for e in bp["edges"]]
+        free = next(e["endpoints"] for e in bp["edges"] if not set(e["endpoints"]) & set(seam))
+        near = next(f for f in free if {seam[0], f} in sides)
+        depth = float(np.linalg.norm(verts[near] - verts[seam[0]]))
+        sweep = arc / rad
+        if sweep >= np.pi or sweep <= 0 or depth >= rad:
+            continue
+        chord = 2 * rad * np.sin(sweep / 2)
+        centre = np.array([chord / 2, np.sqrt(max(rad**2 - (chord / 2) ** 2, 0.0))])
+        a, b = np.array([0.0, 0.0]), np.array([chord, 0.0])
+        scale = (rad - depth) / rad
+        verts[seam[0]], verts[seam[1]] = a, b
+        for fv in free:
+            sv = next(s for s in seam if {s, fv} in sides)
+            verts[fv] = centre + (verts[sv] - centre) * scale
+        bp["vertices"] = verts.tolist()
+        bp["edges"][band["edge"]]["curvature"] = {"type": "circle", "params": [rad, 0, 1]}
+        fi = next(i for i, e in enumerate(bp["edges"]) if e["endpoints"] == list(free))
+        bp["edges"][fi]["curvature"] = {"type": "circle", "params": [rad - depth, 0, 0]}
+        notes.append(f"{band['panel']} R{rad:.2f} sweep {np.degrees(sweep):.1f}deg depth {depth:.2f}")
+    return notes
+
+
 def band_vs_neckline(spec: dict) -> tuple[float, float]:
     """True arc lengths of the neckband edges and of the bodice neckline they are stitched to."""
     import numpy as np
@@ -135,6 +182,13 @@ def build_pattern(safe: str, design: dict, body_yaml: Path, out_dir: Path, name:
     folder = Path(
         pattern.serialize(out_dir, tag="", to_subfolder=True, with_3d=False, with_text=False, view_ids=False)
     )
+    spec_path = folder / f"{name}_specification.json"
+    if spec_path.exists():
+        spec = json.loads(spec_path.read_text())
+        notes = _ring_neckband(spec)
+        if notes:
+            spec_path.write_text(json.dumps(spec, indent=2))
+            print(f"ring neckband {name}: " + ", ".join(notes))
     shutil.copy(body_yaml, folder / f"{name}_body_measurements.yaml")
     return folder
 
