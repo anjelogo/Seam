@@ -15,24 +15,6 @@ UNBOUNDED = 1.0e6
 FLAG_INSIDE_BODY = 2
 
 
-@wp.func
-def back_facing_hit(body_mesh: wp.uint64, p: wp.vec3, d: wp.vec3) -> bool:
-    hit = wp.mesh_query_ray(body_mesh, p, d, UNBOUNDED)
-    if not hit.result:
-        return False
-    return hit.sign < 0.0
-
-
-@wp.func
-def inside_body(body_mesh: wp.uint64, p: wp.vec3) -> bool:
-    # three-ray parity vote, unanimity required (SIM_SPEC 4.3)
-    if not back_facing_hit(body_mesh, p, wp.vec3(1.0, 0.0, 0.0)):
-        return False
-    if not back_facing_hit(body_mesh, p, wp.vec3(0.0, 1.0, 0.0)):
-        return False
-    return back_facing_hit(body_mesh, p, wp.vec3(0.0, 0.0, 1.0))
-
-
 @wp.kernel
 def generate_body_contacts(
     x: wp.array(dtype=wp.vec3),
@@ -89,8 +71,58 @@ def generate_body_contacts(
             wp.atomic_add(overflow, 0, 1)
 
     if d < -margin:
-        if inside_body(body_mesh, px):
-            flag_drag[tid] = FLAG_INSIDE_BODY
+        flag_drag[tid] = FLAG_INSIDE_BODY
+
+
+# adapted from Newton's solve_particle_shape_contacts, Apache-2.0
+@wp.kernel
+def solve_body_contacts(
+    x: wp.array(dtype=wp.vec3),
+    v: wp.array(dtype=wp.vec3),
+    particle_inv_mass: wp.array(dtype=float),
+    particle_radius: wp.array(dtype=float),
+    particle_flags: wp.array(dtype=wp.int32),
+    shape_material_mu: wp.array(dtype=float),
+    particle_mu: float,
+    particle_ka: float,
+    shape_index: int,
+    contact_max: int,
+    contact_count: wp.array(dtype=wp.int32),
+    contact_particle: wp.array(dtype=wp.int32),
+    contact_body_pos: wp.array(dtype=wp.vec3),
+    contact_normal: wp.array(dtype=wp.vec3),
+    dt: float,
+    relaxation: float,
+    delta: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+
+    count = wp.min(contact_max, contact_count[0])
+    if tid >= count:
+        return
+
+    p = contact_particle[tid]
+    if (particle_flags[p] & ParticleFlags.ACTIVE) == 0:
+        return
+
+    n = contact_normal[tid]
+    c = wp.dot(n, x[p] - contact_body_pos[tid]) - particle_radius[p]
+    if c > particle_ka:
+        return
+
+    denom = particle_inv_mass[p]
+    if denom == 0.0:
+        return
+
+    mu = 0.5 * (particle_mu + shape_material_mu[shape_index])
+
+    vel = v[p]
+    vt = vel - n * wp.dot(n, vel)
+
+    delta_n = n * c
+    delta_f = wp.normalize(vt) * wp.max(mu * c, -wp.length(vt) * dt)
+    # upstream scales by the inverse mass here; the reference does not (SIM_SPEC 10.5)
+    wp.atomic_add(delta, p, (delta_f - delta_n) / denom * relaxation)
 
 
 @wp.kernel
@@ -161,6 +193,34 @@ class BodyCollider:
                 ctx.soft_contact_overflow,
                 ctx.flag_drag,
             ],
+            device=self.device,
+        )
+
+    def solve(self, dt: float, relaxation: float = 0.9) -> None:
+        ctx = self.ctx
+        model = ctx.model
+        wp.launch(
+            solve_body_contacts,
+            dim=self.contact_max,
+            inputs=[
+                ctx.state_out.particle_q,
+                ctx.state_out.particle_qd,
+                model.particle_inv_mass,
+                model.particle_radius,
+                model.particle_flags,
+                model.shape_material_mu,
+                float(model.particle_mu),
+                float(model.particle_adhesion),
+                ctx.shape_index_body,
+                self.contact_max,
+                ctx.soft_contact_count,
+                ctx.soft_contact_particle,
+                ctx.soft_contact_body_pos,
+                ctx.soft_contact_normal,
+                dt,
+                relaxation,
+            ],
+            outputs=[ctx.delta],
             device=self.device,
         )
 
