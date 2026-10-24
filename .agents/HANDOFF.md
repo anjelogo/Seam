@@ -9,6 +9,13 @@ Format:
 
 ---
 
+## 2026-10-23 17:30 · anjelo · gen3d drape tee fix
+- tee-slide root cause found and fixed (branch anjelo/tee-fix): drape/body.py measured 6 GarmentCode body keys from the arm-cap apex instead of the nape (head_l −4.87 cm ⇒ every top drafted/placed ~4.9 cm below the shoulders); bodies + patterns re-cut, shoulder cap coverage now 100/100 both poses on all 8 tops + XS/M/XL under new un-gameable gates (drape.coverage + drape.sheet contact sheets; old drape.collar kept for reference — it was the metric that lied)
+- tee-collar's v9a defaults REVERTED (no neckband injection, no ring-hold/stiffness category defaults); rib neckband is now a per-item pattern feature (listing-photo-verified, stored params) cut at 0.85× the neckline (stretch-on, Turtle-scoped patch in drape/pattern.py); the neckline prior now cuts its declared depth (params.py includes GC's shoulder-slope f_depth_adj)
+- mannequin geometry UNCHANGED on this branch (no GLB re-export; the rebake note from the tee-collar entry still stands as-is)
+- open, documented in gen3d/drape/RESULTS_TEE_FIX.md + REVIEW_TEE.md: crew necklines still read as a shallow V in blind review (GC's fc_depth≥0.3 floor + band cinch at centre front); oversized-cut armhole gate misses; XS penetration 0.159%
+- action needed: none (gen3d drape only; nothing wired into prod)
+
 ## 2026-10-23 13:00 · anjelo · gen3d mannequin + tee collar drape
 - mannequin arm/trunk shoulder notch fixed (trunk shoulder row now meets the arm cap at every shoulders slider and pose; v3 widths/slopes, morph target names and anchors unchanged) — avatar + template GLBs and drape bodies re-exported AGAIN, so item textures still need the rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when this branch lands
 - tee drape defaults changed (branch anjelo/tee-collar): collarless tops (tee, longsleeve) get a 2.5 cm rib neckband from the params prior plus a vertical neckline hold + ×4 neck stiffness in the sim, keyed by category — tees now sit on the shoulder points (were 5–12 cm low); hoodies/collared shirts untouched; numbers in gen3d/drape/RESULTS_TEE_COLLAR.md and COLLAR_GRID.md
