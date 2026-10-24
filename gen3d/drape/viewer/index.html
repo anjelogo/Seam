@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Seam drape PoC — template vs cloth-sim</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #16181d; color: #d7dae0; font: 13px/1.4 -apple-system, system-ui, sans-serif; }
+  #bar { display: flex; gap: 14px; align-items: center; padding: 8px 12px; background: #1e2128; flex-wrap: wrap; }
+  #bar b { color: #fff; }
+  button { background: #2a2e37; color: #d7dae0; border: 1px solid #3a3f4b; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  button.on { background: #4463c4; color: #fff; border-color: #4463c4; }
+  #panes { display: flex; height: calc(100vh - 86px); }
+  .pane { flex: 1; position: relative; }
+  .pane + .pane { border-left: 1px solid #000; }
+  .label { position: absolute; top: 8px; left: 10px; background: #000a; padding: 3px 8px; border-radius: 4px; z-index: 2; }
+  .note { position: absolute; bottom: 8px; left: 10px; right: 10px; color: #f3b53f; z-index: 2; white-space: pre-line; }
+  #sliders { display: flex; gap: 8px; padding: 6px 12px; background: #1e2128; align-items: center; flex-wrap: wrap; }
+  #sliders label { display: flex; gap: 4px; align-items: center; font-size: 11px; color: #9aa0ab; }
+  input[type=range] { width: 70px; }
+  body.eval #bar, body.eval #sliders, body.eval #paneL, body.eval .label, body.eval .note { display: none; }
+  body.eval { background: transparent; }
+  body.eval #panes { height: 100vh; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="bar">
+  <b>Seam drape PoC</b>
+  <span id="items"></span>
+  <span>| right pane:</span><span id="modes"></span>
+  <span id="sizes"></span>
+  <span>| texture:</span><span id="texs"></span>
+  <span id="runlabel" style="display:none">| run:</span><span id="runsw"></span>
+  <span style="margin-left:auto" id="status">loading manifest…</span>
+</div>
+<div id="sliders"></div>
+<div id="panes">
+  <div class="pane" id="paneL"><div class="label">current pipeline (template_textured)</div><div class="note"></div></div>
+  <div class="pane" id="paneR"><div class="label">cloth-sim drape</div><div class="note"></div></div>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const PARAMS = new URLSearchParams(location.search);
+const EVAL = PARAMS.has("eval");
+const RUN_PAIRS = { "runs/out_texture": "runs/out_texture_v3", "runs/out_v2": "runs/out_v3" };
+let RUN = PARAMS.get("out") || "runs/out";
+let ROOT = `/gen3d/drape/${RUN}`;
+const SLIDER_NAMES = ["height","weight","muscle","shoulders","chest","waist","hips","leg_length"];
+const loader = new GLTFLoader();
+const state = { item: null, mode: "draped", size: "fit", tex: "v2", manifest: null, weights: Object.fromEntries(SLIDER_NAMES.map(n => [n, 0.5])) };
+if (EVAL) document.body.classList.add("eval");
+
+function makePane(el) {
+  const scene = new THREE.Scene();
+  scene.background = EVAL ? null : new THREE.Color(0x16181d);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 50);
+  camera.position.set(0.4, 1.45, 2.6);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: EVAL });
+  el.appendChild(renderer.domElement);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.95, 0);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x334, 1.9));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.6);
+  dir.position.set(2, 3, 2.5);
+  scene.add(dir);
+  if (!EVAL) scene.add(new THREE.GridHelper(2, 10, 0x333a46, 0x262b34));
+  const group = new THREE.Group();
+  scene.add(group);
+  function resize() {
+    const w = el.clientWidth, h = el.clientHeight;
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderer.setSize(w, h); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  }
+  addEventListener("resize", resize); resize();
+  return { el, scene, camera, renderer, controls, group, avatar: null, garment: null };
+}
+const L = makePane(document.getElementById("paneL"));
+const R = makePane(document.getElementById("paneR"));
+
+function note(p, msg) { p.el.querySelector(".note").textContent = msg || ""; }
+function load(url) {
+  return new Promise((res, rej) => loader.load(url, g => res(g.scene), undefined, rej));
+}
+function applyMorphs(root, weights) {
+  root?.traverse(o => {
+    if (!o.morphTargetDictionary) return;
+    for (const [name, v] of Object.entries(weights)) {
+      const i = o.morphTargetDictionary[name];
+      if (i !== undefined) o.morphTargetInfluences[i] = v;
+    }
+  });
+}
+async function setAvatar(p) {
+  if (p.avatar) return;
+  try {
+    p.avatar = await load("/assets/avatar_masc.glb");
+    p.group.add(p.avatar);
+  } catch { note(p, "avatar_masc.glb not reachable — serve from the repo root"); }
+}
+async function setGarment(p, url, doubleSide = false) {
+  if (p.garment) { p.group.remove(p.garment); p.garment = null; }
+  if (!url) { note(p, "no GLB for this combination yet (GPU run pending?)"); return; }
+  try {
+    p.garment = await load(url);
+    if (doubleSide) p.garment.traverse(o => { if (o.isMesh) o.material.side = THREE.DoubleSide; });
+    p.group.add(p.garment);
+    note(p, "");
+  } catch { note(p, `missing: ${url}`); }
+}
+function rightUrl(entry) {
+  const legacy = state.tex === "legacy";
+  if (state.mode === "bound") return legacy ? entry.bound_legacy : entry.bound;
+  if (state.size !== "fit") return (entry.sizes || {})[state.size];
+  return legacy ? entry.draped_legacy : entry.draped;
+}
+async function refresh() {
+  const entry = state.manifest.items.find(i => i.safe === state.item);
+  document.getElementById("status").textContent = entry.title.slice(0, 70);
+  await Promise.all([setAvatar(L), setAvatar(R)]);
+  await Promise.all([setGarment(L, entry.template), setGarment(R, rightUrl(entry), true)]);
+  applyAll();
+}
+function applyAll() {
+  for (const p of [L, R]) { applyMorphs(p.avatar, state.weights); applyMorphs(p.garment, state.weights); }
+}
+function buttonRow(el, values, get, set, label = v => v) {
+  el.innerHTML = "";
+  for (const v of values) {
+    const b = document.createElement("button");
+    b.textContent = label(v);
+    b.className = get() === v ? "on" : "";
+    b.onclick = async () => { await set(v); buttonRow(el, values, get, set, label); refresh(); };
+    el.appendChild(b);
+  }
+}
+function sliders() {
+  const el = document.getElementById("sliders");
+  el.innerHTML = "<span style='color:#9aa0ab'>body morphs (drive avatar + bound garment):</span>";
+  for (const n of SLIDER_NAMES) {
+    const lab = document.createElement("label");
+    lab.innerHTML = `${n}<input type=range min=0 max=1 step=0.01 value=0.5>`;
+    lab.querySelector("input").oninput = e => { state.weights[n] = +e.target.value; applyAll(); };
+    el.appendChild(lab);
+  }
+}
+async function loadRun(run) {
+  const manifest = await (await fetch(`/gen3d/drape/${run}/viewer_manifest.json`)).json();
+  RUN = run; ROOT = `/gen3d/drape/${run}`;
+  state.manifest = manifest;
+  if (!manifest.items.find(i => i.safe === state.item)) state.item = manifest.items[0].safe;
+  buttonRow(document.getElementById("items"), manifest.items.map(i => i.safe), () => state.item, v => { state.item = v; state.size = "fit"; });
+  const ver = () => Object.values(RUN_PAIRS).includes(RUN) ? "v3" : "v2";
+  buttonRow(document.getElementById("texs"), ["v2", "legacy"], () => state.tex, v => { state.tex = v; }, v => v === "v2" ? ver() : v);
+}
+async function main() {
+  try {
+    await loadRun(RUN);
+  } catch {
+    document.getElementById("status").textContent =
+      "no manifest — run: uv run --no-sync python viewer/build_manifest.py (from gen3d/drape), serve repo root: python3 -m http.server 8808";
+    return;
+  }
+  buttonRow(document.getElementById("modes"), ["draped", "bound"], () => state.mode, v => { state.mode = v; });
+  const sz = ["fit", "XS", "M", "XL"];
+  buttonRow(document.getElementById("sizes"), sz, () => state.size, v => { state.size = v; state.mode = "draped"; });
+  const pairV2 = RUN_PAIRS[RUN] ? RUN : (Object.entries(RUN_PAIRS).find(([, v]) => v === RUN) || [null])[0];
+  if (pairV2) {
+    const pair = { v2: pairV2, v3: RUN_PAIRS[pairV2] };
+    const other = RUN === pair.v3 ? pair.v2 : pair.v3;
+    const probe = await fetch(`/gen3d/drape/${other}/viewer_manifest.json`, { method: "HEAD" }).catch(() => null);
+    if (probe && probe.ok) {
+      document.getElementById("runlabel").style.display = "";
+      buttonRow(document.getElementById("runsw"), ["v2", "v3"], () => (RUN === pair.v3 ? "v3" : "v2"), async v => { await loadRun(pair[v]); });
+    }
+  }
+  sliders();
+  if (EVAL) {
+    R.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 20);
+    R.controls.enabled = false;
+  } else {
+    await refresh();
+  }
+  window.__poc = {
+    state,
+    items: state.manifest.items.map(i => i.safe),
+    async set(item, mode = "draped", size = "fit", tex = "v2") {
+      state.item = item; state.mode = mode; state.size = size; state.tex = tex;
+      await refresh();
+    },
+    // eval mode: orthographic, framed on the garment bbox so every variant and view lines up
+    async shot(item, tex = "v2", azDeg = 0, avatar = false) {
+      state.item = item; state.tex = tex; state.mode = "draped"; state.size = "fit";
+      const entry = state.manifest.items.find(i => i.safe === item);
+      const url = tex === "legacy" ? entry.draped_legacy : entry.draped;
+      if (avatar) await setAvatar(R);
+      if (R.avatar) R.avatar.visible = avatar;
+      await setGarment(R, url, true);
+      if (!R.garment) return { ok: false, url };
+      applyAll();
+      const box = new THREE.Box3().setFromObject(R.garment);
+      const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+      const aspect = R.el.clientWidth / R.el.clientHeight;
+      const half = 1.05 * Math.max(s.y / 2, Math.max(s.x, s.z) / 2 / aspect);
+      Object.assign(R.camera, { left: -half * aspect, right: half * aspect, top: half, bottom: -half });
+      R.camera.updateProjectionMatrix();
+      const az = azDeg * Math.PI / 180;
+      R.camera.position.set(c.x + 5 * Math.sin(az), c.y, c.z + 5 * Math.cos(az));
+      R.camera.lookAt(c);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { ok: true, url, box: [box.min.toArray(), box.max.toArray()] };
+    },
+    setView(azDeg, height = 1.0, radius = 2.8) {
+      const az = azDeg * Math.PI / 180;
+      for (const p of [L, R]) {
+        p.camera.position.set(radius * Math.sin(az), height, radius * Math.cos(az));
+        p.controls.target.set(0, 0.95, 0);
+        p.controls.update();
+      }
+    },
+    ready: true,
+  };
+  (function loop() {
+    requestAnimationFrame(loop);
+    for (const p of [L, R]) { p.controls.update(); p.renderer.render(p.scene, p.camera); }
+  })();
+}
+main();
+</script>
+</body>
+</html>
