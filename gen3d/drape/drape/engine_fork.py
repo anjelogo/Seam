@@ -3,8 +3,8 @@ from pathlib import Path
 import yaml
 
 FORK_HINT = (
-    "--engine fork needs warp.sim, which only the NvidiaWarp-GarmentCode source build provides. "
-    "Run it in the fork venv (on the GPU pod /workspace/seam/gen3d/drape/.venv) or pass --engine newton."
+    "--engine fork is research-only and needs the opt-in fork env built by drape/scripts/setup_fork.sh. "
+    "The default engine is newton; pass --engine newton unless you built that env."
 )
 
 _installed = False

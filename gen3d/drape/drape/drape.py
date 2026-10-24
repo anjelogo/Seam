@@ -18,11 +18,12 @@ from pygarment.meshgen import boxmeshgen as boxmeshgen_mod
 from pygarment.meshgen.boxmeshgen import BoxMesh
 from pygarment.meshgen.sim_config import PathCofig
 
-# the engine is resolved lazily: importing warp any earlier than pygarment reorders the pattern's panels
-
 # upstream warning at boxmeshgen.py:458 crashes on missing Edge.name
 if not hasattr(boxmeshgen_mod.Edge, "name"):
     boxmeshgen_mod.Edge.name = "edge"
+
+# warp must be imported right here, after pygarment, or the pattern stage jitters run to run
+import warp
 
 A_POSE_DEG = 45.0
 # tops sim in GarmentCode's A-pose (drape.bind puts them back on the web pose); bottoms keep their waist
