@@ -25,6 +25,7 @@ FULL = {"front": (0.0, 8.0), "back": (180.0, 8.0), "side": (90.0, 8.0), "3/4": (
 SHOULDER = (0.0, 62.0)
 FULL_BOX = (np.array([0.0, 127.0, 0.0]), 58.0)  # every top is framed the same, so rows compare straight across
 CAP_BOX = (np.array([0.0, 138.0, 0.0]), 33.0)
+LIFT = 1.0  # cm the worn layer is pushed camera-ward, so a 2mm cloth gap outranks the mean-z tie
 MAX_KB = 400
 
 
@@ -40,14 +41,15 @@ def basis(az: float, el: float) -> np.ndarray:
     return np.stack([right, np.cross(fwd, right), fwd])
 
 
-def render(layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]], box: tuple, az: float, el: float) -> Image.Image:
+def render(layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]], box: tuple, az: float, el: float,
+           lift: float = 0.0) -> Image.Image:
     """Painter's algorithm over both meshes at once: back faces culled, the rest drawn far to near."""
     img = Image.new("RGB", (TILE, TILE), BG)
     draw = ImageDraw.Draw(img)
     centre, half = box
     rot, scale = basis(az, el), TILE / (2 * half)
     poly, shade, depth = [], [], []
-    for verts, faces, colour in layers:
+    for li, (verts, faces, colour) in enumerate(layers):
         cam = (verts - centre) @ rot.T
         screen = np.stack([TILE / 2 + cam[:, 0] * scale, TILE / 2 - cam[:, 1] * scale], 1)
         tri = cam[faces]
@@ -63,7 +65,7 @@ def render(layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]], box: tuple, 
         rgb = np.broadcast_to(np.asarray(colour, float), (len(faces), 3))[keep]
         poly.append(pix[keep])
         shade.append(np.clip(rgb * lit[:, None], 0, 255).astype(np.uint8))
-        depth.append(tri[keep][:, :, 2].mean(1))
+        depth.append(tri[keep][:, :, 2].mean(1) + (lift if li == len(layers) - 1 else 0.0))
     if not poly:
         return img
     poly, shade = np.concatenate(poly), np.concatenate(shade)
@@ -140,8 +142,8 @@ def row(out: Path, safe: str, inputs: Path | None, marks: dict) -> Image.Image:
             pct[side] = 100.0 * metrics["coverage"]
         dressed = body_layers(parts, None) + [(gverts, gfaces, GARMENT_RGB)]
         heat = body_layers(parts, heat_colour(mark, covered))
-        line = [tag(render(dressed, FULL_BOX, *FULL[v]), f"{pose} {v}") for v in FULL]
-        line.append(tag(render(dressed, CAP_BOX, *SHOULDER), f"{pose} shoulder"))
+        line = [tag(render(dressed, FULL_BOX, *FULL[v], lift=LIFT), f"{pose} {v}") for v in FULL]
+        line.append(tag(render(dressed, CAP_BOX, *SHOULDER, lift=LIFT), f"{pose} shoulder"))
         line += [tag(render(heat, FULL_BOX, *FULL[v]), f"cap {v}") for v in ("front", "back")]
         line.append(tag(render(heat, CAP_BOX, *SHOULDER), "cap top-down"))
         tiles.append(line)
