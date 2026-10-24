@@ -14,17 +14,11 @@ from drape._repo import bootstrap, GC, DRAPE
 bootstrap()
 
 import pygarment.data_config as data_config
-import pygarment.meshgen.simulation as sim_mod
+from pygarment.meshgen import boxmeshgen as boxmeshgen_mod
 from pygarment.meshgen.boxmeshgen import BoxMesh
 from pygarment.meshgen.sim_config import PathCofig
 
-sim_mod.render_images = lambda *a, **k: None
-
-from pygarment.meshgen import boxmeshgen as boxmeshgen_mod
-from pygarment.meshgen.garment import Cloth
-
-# importing warp any earlier than pygarment reorders the pattern's panels
-from warp.sim import ModelBuilder
+# the engine is resolved lazily: importing warp any earlier than pygarment reorders the pattern's panels
 
 # upstream warning at boxmeshgen.py:458 crashes on missing Edge.name
 if not hasattr(boxmeshgen_mod.Edge, "name"):
@@ -85,10 +79,6 @@ def neck_point_subset(verts, ids: list[int]) -> list[int]:
 
 
 _box_save_labels = boxmeshgen_mod.BoxMesh.save_vertex_labels
-_cloth_attach = Cloth._add_attachment_labels
-_cloth_build = Cloth.build_stage
-_cloth_update = Cloth.update
-_add_cloth_mesh = ModelBuilder.add_cloth_mesh_sewing_spring
 
 
 # --neck-hold points: upstream labels the whole neckline ring, keep only its ends
@@ -101,77 +91,103 @@ def _save_vertex_labels(self):
     _box_save_labels(self)
 
 
-# --neck-hold: upstream pins the collar sideways, hold it above the neck base instead
-def _add_attachment_labels(self, builder, config):
-    if NECK["hold"] == "none":
-        return _cloth_attach(self, builder, config)
-    import numpy as np
-    import warp as wp
-
-    names = list(config.attachment_labels)
-    config.attachment_labels = [n for n in names if n not in COLLAR_LABELS]
-    _cloth_attach(self, builder, config)
-    config.attachment_labels = names
-    labels = yaml.safe_load(Path(self.paths.g_vert_labels).read_text()) or {}
-    for name in COLLAR_LABELS:
-        ids = labels.get(name) or []
-        if not ids or name not in names:
-            continue
-        i = names.index(name)
-        # slack below the neckline's own rest height: it may ride up, not drop
-        level = float(np.asarray(self.v_cloth_init)[ids][:, 1].min()) - 0.5
-        builder.add_attachment(
-            ids, wp.vec3(0.0, level, 0.0), wp.vec3(0.0, 1.0, 0.0),
-            stiffness=config.attachment_stiffness[i], damping=config.attachment_damping[i],
-        )
-        config.enable_attachment_constraint = True
-        print(f"neck-hold {NECK['hold']}: {name} {len(ids)} verts held above y={level:.2f}")
-    config.update_min_steps()
-
-
-def _build_stage(self, config):
-    NECK["cloth"] = self
-    _cloth_build(self, config)
-
-
-# --neck-stiff: warp takes per-triangle stiffness, raise it in the neckline band only
-def _add_cloth_mesh_sewing_spring(self, *a, **kw):
-    n0 = len(self.tri_indices)
-    out = _add_cloth_mesh(self, *a, **kw)
-    cloth, factor = NECK["cloth"], NECK["stiff"]
-    if not factor or cloth is None:
-        return out
-    labels = yaml.safe_load(Path(cloth.paths.g_vert_labels).read_text()) or {}
-    ids = sorted({v for n in COLLAR_LABELS for v in (labels.get(n) or [])})
-    tris = self.tri_indices[n0:]
-    hit = neck_band_faces(self.particle_q, tris, ids)
-    for i in hit:
-        ke, ka, kd, drag, lift = self.tri_materials[n0 + i]
-        self.tri_materials[n0 + i] = (ke * factor, ka * factor, kd, drag, lift)
-    print(f"neck-stiff {factor}x: {len(hit)} of {len(tris)} faces in the {NECK_BAND_CM} cm neckline band")
-    return out
-
-
-# --dump-every: cloth vertex positions per N frames, for the slide-frame metric
-def _update(self, frame):
-    _cloth_update(self, frame)
-    every = NECK["dump"]
-    if not every or frame < 0 or frame % every:
-        return
-    import numpy as np
-
-    d = Path(self.paths.out)
-    d.mkdir(parents=True, exist_ok=True)
-    if not (d / "dump_faces.npy").exists():
-        np.save(d / "dump_faces.npy", np.asarray(self.f_cloth))
-    np.save(d / f"dump_f{frame:05d}.npy", np.asarray(self.current_verts))
-
-
 boxmeshgen_mod.BoxMesh.save_vertex_labels = _save_vertex_labels
-Cloth._add_attachment_labels = _add_attachment_labels
-Cloth.build_stage = _build_stage
-Cloth.update = _update
-ModelBuilder.add_cloth_mesh_sewing_spring = _add_cloth_mesh_sewing_spring
+
+ENGINE = {"name": "fork", "mod": None}
+
+
+# resolved on first sim, not at import, so warp still loads after pygarment
+def engine(name: str):
+    if ENGINE["mod"] is None or ENGINE["name"] != name:
+        if name == "fork":
+            from drape import engine_fork
+
+            engine_fork.install()
+            mod = engine_fork
+        else:
+            from drape import gc_sim
+
+            install_newton_patches()
+            mod = gc_sim
+        ENGINE.update(name=name, mod=mod)
+    return ENGINE["mod"]
+
+
+_newton_installed = False
+
+
+def install_newton_patches() -> None:
+    global _newton_installed
+    if _newton_installed:
+        return
+    from drape.gc_sim.garment import Cloth
+    from drape.sim_newton import builder as builder_mod
+
+    _cloth_attach = Cloth._add_attachment_labels
+    _cloth_update = Cloth.update
+    _sewing = builder_mod.add_cloth_sewing
+
+    # --neck-hold: upstream pins the collar sideways, hold it above the neck base instead
+    def _add_attachment_labels(self, attachments, config):
+        if NECK["hold"] == "none":
+            return _cloth_attach(self, attachments, config)
+        import numpy as np
+        import warp as wp
+
+        names = list(config.attachment_labels)
+        config.attachment_labels = [n for n in names if n not in COLLAR_LABELS]
+        _cloth_attach(self, attachments, config)
+        config.attachment_labels = names
+        labels = self.cloth.vertex_labels or {}
+        for name in COLLAR_LABELS:
+            ids = labels.get(name) or []
+            if not ids or name not in names:
+                continue
+            i = names.index(name)
+            # slack below the neckline's own rest height: it may ride up, not drop
+            level = float(np.asarray(self.v_cloth_init)[ids][:, 1].min()) - 0.5
+            attachments.add(
+                ids, wp.vec3(0.0, level, 0.0), wp.vec3(0.0, 1.0, 0.0),
+                stiffness=config.attachment_stiffness[i], damping=config.attachment_damping[i],
+            )
+            config.enable_attachment_constraint = True
+            print(f"neck-hold {NECK['hold']}: {name} {len(ids)} verts held above y={level:.2f}")
+        config.update_min_steps()
+
+    # --neck-stiff: raise per-triangle stiffness in the neckline band; no xpbd pass reads it (SIM_SPEC 7.2)
+    def _add_cloth_sewing(builder, cloth, config):
+        n0 = len(builder.tri_indices)
+        out = _sewing(builder, cloth, config)
+        factor = NECK["stiff"]
+        if not factor:
+            return out
+        ids = sorted({v for n in COLLAR_LABELS for v in (cloth.vertex_labels.get(n) or [])})
+        tris = builder.tri_indices[n0:]
+        hit = neck_band_faces(builder.particle_q, tris, ids)
+        for i in hit:
+            ke, ka, kd, drag, lift = builder.tri_materials[n0 + i]
+            builder.tri_materials[n0 + i] = (ke * factor, ka * factor, kd, drag, lift)
+        print(f"neck-stiff {factor}x: {len(hit)} of {len(tris)} faces in the {NECK_BAND_CM} cm neckline band")
+        return out
+
+    # --dump-every: cloth vertex positions per N frames, for the slide-frame metric
+    def _update(self, frame):
+        _cloth_update(self, frame)
+        every = NECK["dump"]
+        if not every or frame < 0 or frame % every:
+            return
+        import numpy as np
+
+        d = Path(self.paths.out)
+        d.mkdir(parents=True, exist_ok=True)
+        if not (d / "dump_faces.npy").exists():
+            np.save(d / "dump_faces.npy", np.asarray(self.f_cloth))
+        np.save(d / f"dump_f{frame:05d}.npy", np.asarray(self.current_verts))
+
+    Cloth._add_attachment_labels = _add_attachment_labels
+    Cloth.update = _update
+    builder_mod.add_cloth_sewing = _add_cloth_sewing
+    _newton_installed = True
 
 
 class VramSampler:
@@ -279,9 +295,10 @@ def drape_one(spec_dir: Path, name: str, wearer: str, out_dir: Path, props, timi
                         "resolution_scale": props["sim"]["config"]["resolution_scale"], "boxmesh_only": True,
                         **rec_extra})
         return paths.g_box_mesh
+    sim = engine(ENGINE["name"])
     t1 = time.time()
     with VramSampler() as vram:
-        sim_mod.run_sim(box.name, props, paths, save_v_norms=False, store_usd=False, optimize_storage=False, verbose=False)
+        sim.run_sim(box.name, props, paths, save_v_norms=False, store_usd=False, optimize_storage=False, verbose=False)
     sim_s = round(time.time() - t1, 2)
     stats = props["sim"]["stats"]
     rec = {
@@ -447,6 +464,7 @@ def main() -> None:
     ap.add_argument("--bodies", type=Path, default=DRAPE / "runs/bodies")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--wearer", default="wearer_masc")
+    ap.add_argument("--engine", choices=("newton", "fork"), default="fork", help="cloth engine (default: fork)")
     ap.add_argument("--base", default="masc", choices=("masc", "fem"), help="mannequin base of --wearer, for posing it")
     ap.add_argument("--only")
     ap.add_argument("--size")
@@ -474,6 +492,7 @@ def main() -> None:
     args = ap.parse_args()
 
     NECK.update(hold=args.neck_hold or "none", stiff=args.neck_stiff, dump=args.dump_every)
+    ENGINE["name"] = args.engine
     props_kw = dict(res=args.res, max_steps=args.max_steps, attachment=not args.no_attachment,
                     frame_timeout=args.frame_timeout, body_friction=args.body_friction,
                     preset=args.preset, release_frame=args.release_frame)
