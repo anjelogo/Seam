@@ -61,7 +61,7 @@ actually runs, so this spec uses 0.03 cm and flags the difference.
 | --- | --- | --- |
 | Length | centimetre | The garment box mesh is authored in centimetres and is **not** rescaled. |
 | Time | second | |
-| Mass | arbitrary, consistent with area × density | Per-particle mass accumulates as density × triangle rest area ÷ 3 from each incident triangle. With `fabric_density` 1.0 a particle's mass is numerically one third of its incident rest area in square centimetres. |
+| Mass | arbitrary, consistent with area × density | Per-particle mass accumulates as density × triangle rest area ÷ 3 from each incident triangle. With `fabric_density` 1.0 a particle's mass is numerically one third of its incident rest area in square centimetres. (Corrected in §10.10: plus a base term equal to the fabric-thickness value.) |
 | Angle | radian internally | Bending rest angles are radians. `pygarment` supplies body measurement angles in degrees and converts. |
 
 ### 1.2 Up axis, body scale, shift
@@ -422,7 +422,7 @@ tagged `crashes` (§2.5). Degenerate or inverted rest triangles are clamped to z
 with an identity rest basis, reported, and excluded from the element list.
 
 *Mass.* Each triangle distributes `density × rest_area ÷ 3` to each of its three vertices,
-accumulating. Stitch triangles contribute their **pattern-space** rest area, so mass reflects the
+accumulating (corrected in §10.10: on top of a per-particle base term). Stitch triangles contribute their **pattern-space** rest area, so mass reflects the
 true garment, not the stitched-shut mesh.
 
 *Bending elements.* Built from the adjacency of only the triangles just added. **Only interior edges
@@ -435,7 +435,8 @@ element carries `edge_ke` and `edge_kd`.
 *Springs.* Created from the bending elements, not from the triangles. For each bending element, five
 vertex pairs are added: both opposite vertices paired with each of the two shared-edge vertices, plus
 the shared edge itself. Pairs are deduplicated across the whole garment, so the spring set is the set
-of **triangle edges plus the diagonals of adjacent triangle pairs**. Each spring's rest length is:
+of **triangle edges plus the diagonals of adjacent triangle pairs** (corrected in §10.12: the five
+pairs are all triangle edges; there are no diagonal springs). Each spring's rest length is:
 
 - the stored pattern-space length, if that vertex pair appears in `orig_lens`; otherwise
 - the current distance between the two particles.
@@ -444,7 +445,8 @@ All springs share `spring_ke` and `spring_kd`.
 
 **The spring set is also the edge set used by both intersection counters (§5) and by the global
 piercing survey (§4.5).** This is important: those counts are per-spring, so they include diagonals,
-and their magnitude is not comparable to a count over mesh edges alone.
+and their magnitude is not comparable to a count over mesh edges alone (corrected in §10.12: the
+spring set has no diagonals, so the counts are over triangle edges).
 
 > **⚠ The per-triangle material tuple is inert in this configuration.** Each triangle stores a
 > five-value material tuple `(tri_ke, tri_ka, tri_kd, tri_drag, tri_lift)` and it is uploaded to the
@@ -810,7 +812,7 @@ Passes 5 and 6 run **after** pass 4 deliberately, because they consume the pierc
 | 4 | Zero the position-delta accumulator | per iteration |
 | 5 | Ground contact | only if `ground` — **off** here |
 | 6 | **Body contact solve** (§4.3) | if more than one shape exists |
-| 7 | **Body-part drag solve** (§4.6) | if `cloth_reference_drag` |
+| 7 | **Body-part drag solve** (§4.6) | if `cloth_reference_drag` and more than one shape exists (§10.6) |
 | 8 | Particle–particle self contact | if enabled — **off** here |
 | 9 | **Point–triangle self-contact solve** (§4.7) | if `enable_triangle_particle_collisions` |
 | 10 | **Edge–edge self-contact solve** (§4.7) | if springs exist and `enable_edge_edge_collisions` |
@@ -874,7 +876,7 @@ drape being visibly damped-looking.
    — the nearest face is always found regardless of distance. The margin is applied afterwards, as a
    test, not as a search bound.
 3. **Apply the per-particle face filter** (§3.5). A filtered face discards the contact and skips
-   step 6 as well.
+   step 6 as well (corrected in §10.4: it suppresses the step-7 drag flag too).
 4. Compute the signed distance to the surface point and the outward normal.
 5. **Subtract the shape's collision thickness** from the distance. With `body_collision_thickness`
    0.25 the body behaves as if inflated by 0.25 cm, so cloth is held off the skin.
@@ -915,7 +917,9 @@ Overflow past the soft-contact cap increments the count but writes nothing, so c
 - For **contact**, the sign comes from the signed closest-point query, i.e. from the local face
   normal at the nearest point. This is cheap and correct near a smooth surface, but unreliable in
   concave regions and near boundaries.
-- For **drag** (§4.6), a different and more robust test is used: a **three-ray parity vote**. Rays
+- For **drag** (§4.6), a different and more robust test is used: a **three-ray parity vote**
+  (corrected in §10.12: a first-hit back-face vote, used only for the sign of the drag error; the
+  flag itself comes from step 7's signed distance). Rays
   are cast along +X, +Y and +Z; the point is declared inside only if **all three** report hitting a
   back-facing triangle. Unanimity is required, so the test is conservative — it under-reports inside
   rather than over-reporting it. This is the classical ray-parity containment test, hardened by
@@ -1014,7 +1018,7 @@ also that the thickness value read is always the **main collider's**, even in th
 where the target is a body-part submesh — an inconsistency to reproduce rather than fix.
 
 **State read.** The constraint reads **frame-start** positions and velocities, not the current
-predicted positions. Across the ten substeps of a frame it therefore keeps pulling toward a target
+predicted positions (corrected in §10.6: it reads the current substep's input positions). Across the ten substeps of a frame it therefore keeps pulling toward a target
 computed from where the particle was at the beginning of the frame.
 
 **When it stops.** The flags are cleared and recomputed at the start of **every** frame's collision
@@ -1057,7 +1061,7 @@ on top, giving 0.25 cm. Both also share the rule that **already-piercing particl
   both predicted motions onto the current separation direction, and **keep the contact only if the
   predicted separation falls below twice the radius plus half a radius**.
 - Record the pair and a **sidedness flag**: whether the particle currently lies on the negative side
-  of the triangle's normal. This freezes the correct separation direction at detection time, which is
+  of the triangle's normal (refined in §10.2: measured from the triangle's first vertex). This freezes the correct separation direction at detection time, which is
   what stops the response from flipping the particle through the triangle later in the frame.
 
 **Point–triangle response**, per iteration, per recorded pair:
@@ -1068,7 +1072,7 @@ on top, giving 0.25 cm. Both also share the rule that **already-piercing particl
   twice the radius; active only when negative.
 - Gradients are formed with respect to the particle **and** all three triangle vertices, and the
   denominator includes all four inverse masses, so the constraint is *scaled* as a four-body
-  constraint. But **only the particle's own delta is applied** — the three triangle vertices are
+  constraint (corrected in §10.2: in effect two-body, the particle plus the face's first vertex). But **only the particle's own delta is applied** — the three triangle vertices are
   never moved by this pass. Each of them gets its own opportunity when it is itself the queried
   particle.
 - **No compliance and no damping**: the correction is applied at full strength with relaxation 1.0,
@@ -1086,7 +1090,8 @@ on top, giving 0.25 cm. Both also share the rule that **already-piercing particl
   the pair in reversed order, because neighbouring triangles traverse a shared edge in opposite
   directions.
 - Otherwise find the closest points between the two segments. **Reject the pair if either closest
-  point lies within one radius of a segment endpoint** — that configuration is left to the
+  point lies within one radius of a segment endpoint** (refined in §10.3: both parameters are scaled
+  by the query edge's length) — that configuration is left to the
   point–triangle pass, which handles it better. This is the standard split of responsibilities
   between the two tests.
 - Predict both closest points forward one detection step, project onto the connecting direction, and
@@ -1508,7 +1513,8 @@ The module provides five entry points that `pygarment` uses directly.
   stored pattern-space lengths, and strictly shorter than at frame 0. Also: the number of bending
   elements equals the number of interior edges of the cloth mesh, exactly; and no bending element
   references a boundary edge. Also: total particle mass equals `fabric_density` times the total rest
-  area of all triangles, to within floating-point tolerance.
+  area of all triangles, to within floating-point tolerance (corrected in §10.10: plus the
+  per-particle base term).
 
 ### 6.8 `ModelBuilder.add_cloth_reference_labels`
 
@@ -2145,3 +2151,481 @@ fork's deviation from it is described.
 
 No fork contents were written to notes, temporary files or reports. The scratch directory used to
 hold the upstream clone was deleted.
+
+---
+
+## 10. Clarifications
+
+Written by a second clean-room reader (S1c) from the fork and audited by the lead before it was
+merged here. Behaviour only; it contains no fork code. Where this section corrects §1–§9, the
+corrected statement is marked inline and this section wins.
+
+
+Precision answers to twelve questions about the reference cloth solver, for implementers rebuilding
+from §1–§9 and needing 3 mm drape parity. Behaviour only, in prose and my own notation. Standard
+methods cited where they apply (XPBD: Macklin, Müller, Chentanez 2016; predictive contacts: Lewin,
+GDC 2018; Bridson, Fedkiw, Anderson 2002; Provot 1997; Möller–Trumbore ray–triangle; Ericson,
+*Real-Time Collision Detection*, for segment–segment closest points).
+
+Notation: Δt_sub is the substep timestep, Δt_det the timestep handed to collision detection; r is a
+particle's contact radius; w its inverse mass; x position, v velocity; "gap" is a signed surface
+separation, positive when apart.
+
+### 10.1 Self-contact prediction: how candidate positions are advanced
+
+Both detection passes advance every particle they touch by the same rule, and it is not the textbook
+one. The predicted position is
+
+  x + v·Δt_det + w·Δt_det²·g
+
+Three things must be reproduced literally.
+
+- **No factor of one half.** The full Δt_det², not ½gΔt², and not folded into the velocity — the
+  velocities read are the state's, unmodified.
+- **The gravity term is multiplied by the particle's inverse mass.** Dimensionally wrong, but it is
+  what the reference does: a pinned particle gets no gravity term at all, a light one gets it inflated
+  by one over its mass. It scales with 1/m, so a mass error feeds straight into which pairs are
+  detected — this ties §10.1 to §10.10.
+- **The gravity is the model's gravity at the moment the pass runs**, read as a value: exactly zero
+  below `zero_gravity_steps`, the downward 9.81 vector from that frame on (§1.3). In the zero-gravity
+  window the prediction is pure constant-velocity extrapolation.
+
+Δt_det is the **full frame period** (§4.4) — specifically the substep timestep times the substep
+count, as the caller computes it. Positions and velocities are the frame-start state, since the whole
+detection pass runs before the first substep.
+
+**Point–triangle, combining the two motions.** With p the particle and q the closest point on the
+triangle from current positions by barycentric clamping:
+
+1. The separation direction is the unit vector **from the particle toward the closest point**,
+   e = (q − p)/|q − p|. It is the direction of the unsigned current gap, not the triangle normal.
+2. The particle's predicted displacement is d_p = (predicted − current). Each triangle vertex gets
+   its own, each with **its own** inverse mass in the gravity term.
+3. The closest point's predicted displacement is the **barycentric blend of the three vertex
+   displacements**, with the same clamped weights that produced q. The closest point is not re-found
+   after prediction.
+4. Predicted gap = |q − p| − (d_p·e) + (d_q·e).
+5. Keep if that is below 2r + r/2, with **r the queried particle's own radius** — not a maximum over
+   the four. Failing marks the slot filtered rather than dropping it (§10.12).
+
+**Edge–edge.** With the two closest points and the current closest distance from the segment–segment
+routine (Ericson): e is the unit vector **from the query edge's closest point toward the opposing
+edge's**; each of the four endpoints is advanced by the rule above; the two closest points' predicted
+displacements are obtained by interpolating the endpoint displacements with the **detection-time
+segment parameters**; predicted gap = current gap − (query-side projection) + (opposing-side
+projection); keep if below 2r + r/2, with r the **larger of the two query-edge endpoint radii** (the
+opposing edge's radii are never consulted).
+
+Both are "current gap plus relative predicted displacement along the separation direction", with the
+approaching party subtracted and the receding party added.
+
+### 10.2 Point–triangle response: gradients, closest point, normal
+
+**Closest point:** recomputed every iteration from **current** positions by barycentric clamping. The
+weights are not carried over from detection; only the particle index, the face index and one
+sidedness bit are stored. The three vertex indices are read from the query mesh's index buffer at
+that face, and their **order in that buffer matters** (below).
+
+**Normal:** the **current, recomputed** triangle normal — the normalized cross product of the two
+current edge vectors from the triangle's first vertex. The detection-time normal is never stored.
+Only the **sign** is frozen: one bit saying whether, at detection, the particle lay on the negative
+side of that cross product, measured as the sign of n·(p − first vertex) — from the **first vertex**,
+not from the closest point. If set, the recomputed normal is negated each iteration.
+
+**Constraint:** C = n·(p − closest point) − 2r, with r the particle's own radius; active when C < 0.
+(The reference notes it deliberately measures from the closest point, not the first vertex.)
+
+**Gradients — and a correction to §4.7.** Four gradients are formed in the published form for a
+point–triangle distance constraint with a varying normal. The normal-variation terms vanish
+identically, because a unit normal is orthogonal to its own variation; in floating point they are
+rounding noise. The gradients therefore collapse to: particle **n**, the face's **first** vertex
+**−n**, the other two **zero**. So the denominator is in practice **the particle's inverse mass plus
+the face's first vertex's only** — two-body, not four-body, not barycentrically weighted. The
+multiplier is −C over that sum, the correction the particle's inverse mass times the multiplier
+times n. Only the particle moves; relaxation 1.0, no compliance, damping or friction.
+
+For uniform interior masses that pushes the particle out by **about half** the penetration depth per
+iteration. "Fixing" the gradients to the barycentric form (denominator w_p + Σ w_i β_i²) gives about
+three quarters for a centre hit and a different value for every configuration — a 25–50 % difference
+in every self-contact correction, which will not hold 3 mm.
+
+Corollaries: the result depends on the **per-face vertex order** in the cloth mesh, so preserve the
+mesh generator's winding rather than re-ordering faces; if the first vertex is pinned, the
+denominator is the particle's inverse mass alone and the particle is projected the **full** depth in
+one application; the denominator is guarded against being near zero and nothing else is skipped.
+
+### 10.3 Edge–edge: endpoint rejection and response
+
+**The rejection test is a length, and it uses the wrong length.** With L the length of the **query**
+edge and t_a, t_b the segment parameters of the two closest points (query edge, opposing edge), the
+pair is rejected when **any** of t_a·L, (1−t_a)·L, t_b·L, (1−t_b)·L is less than one particle radius.
+
+So it is a distance along the segment, not a bare parameter fraction — but **both** parameters are
+scaled by the *query* edge's length; the opposing edge's own length never enters. Where the opposing
+edge is much shorter or longer, its effective endpoint exclusion zone is wrong by the length ratio
+and pairs are kept or dropped differently from a "correct" implementation. Reproduce the query-edge
+length in all four products. The radius compared against is the larger of the two **query-edge**
+endpoint radii.
+
+A rejected pair is reported back as a zero query-edge parameter and the caller then marks the slot
+filtered (threshold 1e-5), so endpoint rejection and "predicted gap too large" are indistinguishable
+downstream — both simply filter the slot. **The parameters are not stored**: only the four particle
+indices (query edge first) and the **separation direction at detection time**.
+
+**Response, per iteration.**
+
+1. Closest points are **recomputed from current positions** with the same segment–segment routine,
+   parameters clamped to [0,1] (its degenerate-configuration epsilon is 1e-3 scene units, the same at
+   detection and at solve time).
+2. e is taken from the recomputed closest points, then **negated if it points oppositely to the
+   stored detection-time direction**. A consequence that must not be smoothed over: once negated, the
+   constraint value becomes −(current distance) − 2r, so the correction magnitude is *distance + 2r*,
+   not *2r − distance*. A pair that has crossed since detection is pushed back the whole way through.
+3. C = (opposing closest point − query closest point)·e − 2r, with r the larger of the two
+   **query-edge** endpoint radii; active when C < 0.
+4. Gradients are the interpolation weights along e, negated for the query edge: −(1−t_a)e, −t_a e,
+   −(1−t_b)e, −t_b e. The denominator is the sum over all four of inverse mass times squared weight,
+   w_a(1−t_a)² + w_b t_a² + w_0(1−t_b)² + w_1 t_b². Here §4.7's four-body statement **is** correct.
+5. The multiplier is −C over that denominator; each query-edge endpoint moves by its inverse mass
+   times the multiplier times its own gradient. Only the two query-edge endpoints move; relaxation
+   1.0, no compliance, no damping, no friction.
+
+### 10.4 Body contact registration: the stored point and the stored normal
+
+The pass works in the shape's local frame and, for a mesh, in the mesh's **unscaled** space (the
+query point is divided componentwise by the shape scale, the returned surface point multiplied back).
+The signed closest-point query's search radius is 10 000 scene units — effectively unbounded, as §4.3
+says.
+
+**The normal is not the face normal.** It is the unit vector from the returned surface point to the
+particle, multiplied by the query's inside/outside sign (+1 outside, −1 inside). Because the sign
+flips the vector when the particle is inside, this vector **always points outward from the surface**,
+i.e. it is the normalized gradient of the signed distance as evaluated from that closest-point pair.
+The face normal is used by the query only to decide the sign, never as the contact direction. (For a
+particle exactly on the surface this is degenerate and unguarded.) It is stored rotated into world
+space.
+
+**The signed distance** is the sign times the distance, and the shape's collision thickness is then
+**subtracted**. Everything downstream uses the thickness-reduced value.
+
+**The stored contact point is offset outward by the thickness.** It is the particle position minus
+the normal times the *already thickness-reduced* distance, which equals
+
+  (closest surface point) + thickness · (outward normal)
+
+i.e. the closest surface point pushed outward along the normal by exactly the collision thickness,
+then expressed in body-local coordinates, together with the surface velocity at the hit point
+(likewise body-local; zero for a static mesh with no vertex velocities).
+
+**Why that reproduces the inflated surface.** A standard solve whose constraint is
+normal·(x − contact point) − r then evaluates to "distance to the real surface, minus thickness,
+minus radius", so cloth rests with particle centres r outside a surface itself thickness outside the
+skin — 0.35 cm with shipped values. Storing the raw point and subtracting the thickness inside the
+solve gives the same number; forgetting the thickness loses 0.25 cm everywhere, which alone breaks
+3 mm.
+
+**Band and drag flag.** With d the thickness-reduced distance, a contact is registered when
+−margin < d < margin + r, and the flag-2 (inside-body) drag mark is written when d < −margin. Note:
+
+- Both tests use the **same** thickness-reduced d, so the drag flag means "more than the margin inside
+  the *inflated* surface", not inside the skin.
+- When the per-particle face filter rejects the hit face, the distance stays at its initialized large
+  value, so the particle gets **neither a contact nor a drag flag** — a filtered region can never be
+  dragged out of the body.
+- The flag is a plain assignment, not atomic and not a maximum, and the pass runs over every particle
+  × every shape but the last, so for a particle inside more than one collider the **last shape wins**.
+
+### 10.5 Body contact response: standard, with one scaling quirk
+
+It is the **unmodified upstream XPBD particle–shape contact solve**; nothing in it is fork-specific.
+Per registered contact (the count is clamped to the buffer size, the launch covers the whole buffer
+and returns early past the count, inactive particles return):
+
+1. The contact point is brought to world space through the shape's body transform (identity here) and
+   C = normal·(x − contact point) − r. Skip if C exceeds the particle adhesion (0.0).
+2. The friction coefficient is the average of the particle's own and the shape's.
+3. The relative velocity is the particle's **current velocity** minus the contact point's velocity
+   (zero here), split into the normal component and the tangential remainder.
+4. The normal part of the correction is the normal times C.
+5. The friction magnitude is **max(μ·C, −|tangential velocity|·Δt_sub)** — both negative, so the
+   smaller magnitude wins: the Coulomb limit, or the sliding distance implied by the current
+   tangential **velocity** over the substep. Friction is velocity-driven and the non-overshoot bound
+   is that velocity times the substep, not an accumulated displacement; the direction is the unit
+   tangential velocity.
+6. The combined correction (friction minus normal part) is **divided by the summed inverse masses**
+   and multiplied by the soft-contact relaxation 0.9, then accumulated atomically into the shared
+   delta buffer.
+
+Step 6 carries the quirk that decides parity, and it is upstream's: dividing by the inverse mass
+with no outer inverse-mass factor scales the correction by the particle's **mass**, so body contact
+is a soft, mass-weighted nudge converging over substeps rather than a projection. Writing the
+textbook projection here (−C·normal for a static collider) pushes cloth off the body far harder and
+matches no drape. Reproduce the division as written; it makes the result **mass-dependent** (§10.10).
+
+### 10.6 Body-part drag: state read, direction, accumulator, inside test
+
+**Which state it reads — correction to §4.6.** The **current substep's input** positions and
+velocities: before this substep's integration, equivalently the end of the previous substep. Not
+frame-start, not construction time. Every other particle constraint in the substep reads the
+post-integration predicted positions instead, so this is the one pass working from pre-integration
+positions, and across a frame's ten substeps the target is recomputed from **ten different**
+positions, each one substep stale — not from one frozen frame-start position. The velocity it reads
+is never used; only the position matters.
+
+**Accumulator.** Accumulated atomically into the **shared delta buffer**, so it is applied — and
+capped — by §4.9's delta application. That is what makes the full-distance projection survivable, as
+§4.6 says.
+
+**Direction.** The target's closest point comes from an **unsigned** closest-point query (search
+radius 1 000 scene units) on the branch's target mesh, in that mesh's unscaled space. The direction
+is the unit vector from the particle **toward that closest point**, rotated to world, in **both**
+branches — so flag 2 does pull toward the closest whole-body point **even though it is inside**, that
+point being the nearest exit. The magnitude is the full distance, the inverse mass cancelling exactly
+(unit gradient, so the denominator is the inverse mass).
+
+**Two inside tests, at different times; the second runs every iteration.** The **flag** is raised
+once per frame, in contact generation, by the **signed closest-point distance** being more than the
+margin inside the inflated surface (§10.4) — no ray casting. The **sign of the error** used by the
+constraint is recomputed **every time the constraint runs**, i.e. every iteration of every substep,
+by the three-ray vote: the unsigned query gives the distance, the vote the sign. So a particle still
+carrying flag 2 whose vote says "outside" produces **no correction** that iteration and resumes the
+moment the vote flips, without waiting for the next frame — flag 2's *activation* is per-iteration
+though its *eligibility* is per-frame. The vote is **always against the whole-body mesh** in both
+branches, with the query point normalized by the **branch's own** scale first — inconsistent wherever
+a submesh and the body carry different scales. Flag 1 is active when the **signed** error exceeds the
+reference margin plus the radius; flag 2 when it is negative, so a flag-1 particle inside the body
+does nothing.
+
+**Gates, in order.** Return if the flag is zero; then if the particle is inactive **or has no
+reference label** — the label requirement applies to **both** branches, including flag 2 where it is
+otherwise unused, so an unlabelled particle buried in the body is never dragged out. The launch also
+sits inside the "more than one shape exists" branch (minor correction to §4.1 step 7). Three
+passed-in values are never read: the drag stiffness (as §4.6 says), the collision thickness, and the
+stored per-particle normal.
+
+### 10.7 The piercing survey: which labels, which mesh, what gets marked
+
+**The labels are the per-particle body-part reference labels, resolved to integers.** Reference
+submeshes are registered by **name**; the per-particle labels arrive as those same names and map to
+each submesh's position in that list, with anything unknown, empty or absent becoming −1. The
+allow-list pairs go through the **same** table, and a pair naming an unregistered name is **silently
+dropped** rather than erroring. At run time both sides are small integers and the comparison is
+integer equality. They are **not** box-mesh panel names: panel names enter only through panel
+assignment, which emits the body-part names (§3.4). §4.5 is right in substance.
+
+**Which mesh is queried.** The cloth's own query mesh, handed **vertex indices** rather than
+positions — so it reads the positions **stored in the mesh**, those written at the end of the previous
+frame's last substep (§10.11), identical to the frame-start particle positions.
+
+**What a hit marks.** Only the **two spring endpoints**, for both the already-intersecting mark and
+the cloth–cloth drag mark; the pierced face's vertices are read for their labels and **never marked**.
+
+Finer points: the face's label is the first of its three vertices (in that face's index order) not
+−1, the edge's the first of its two endpoints not −1; the gate is "face label is not −1 and differs
+from the edge label", so an **unlabelled edge** passes the gate and is rejected by the allow-list
+lookup instead; the pair is tested in both orders, so the list is genuinely unordered.
+
+### 10.8 Attachment solve
+
+**Constraint value.** If the stored normal is within 1e-5 of zero in **all three** components the
+entry is an **equality** attachment: the normal is recomputed each iteration as the unit vector from
+the particle toward the target, and the constraint value is the **negative distance** to the target —
+always ≤ 0, so an equality attachment is **always active**. Otherwise it is an **inequality**
+attachment: the value is normal·(x − target), active only when negative. Use "all components within
+1e-5 of zero" as the equality test; a legitimately tiny normal would be misread as equality.
+
+**Compliance and damping.** Exactly §4.8's spring forms: α = 1/(k·Δt_sub²) and γ = c/(k·Δt_sub). The
+damping term inside the multiplier is γ times Δt_sub times (normal·v) — note the extra explicit
+Δt_sub, converting the velocity into a displacement over the substep. The multiplier is
+
+  −( C + α·λ + γ·Δt_sub·(normal·v) ) ÷ ( (1 + γ)·w + α )
+
+the gradient being a unit vector, so the usual Σw|∇C|² reduces to w. The applied delta is w times the
+multiplier times the normal, accumulated into the shared buffer.
+
+**Which velocity the damping uses.** The **current** velocity estimate inside the substep: the one
+this substep's integration produced, and on later iterations the one the previous iteration's delta
+application produced. Not the substep-start velocity and not the frame-start velocity.
+
+**Multiplier.** Read and **never written**: zeroed once per substep before the iteration loop with
+nothing accumulating into it, so the α·λ term is identically zero (§3.6 is right). With the shipped
+one iteration per substep that coincides with correct XPBD's first iteration, so the difference only
+appears if a port raises the iteration count.
+
+**Per-entry data and guards.** Stiffness and damping are **per-entry arrays**; one creation call
+broadcasts one stiffness, one damping and one normal across all its indices. The entry is skipped
+when the inverse mass is not positive, the stiffness is not positive, or the damping is negative —
+zero damping is allowed. There is **no active-particle check**, unlike every other particle
+constraint.
+
+### 10.9 Integration: exact order
+
+Per active particle, with Δt_sub:
+
+1. v ← v + ( force·w + g·[w > 0] )·Δt_sub. The gravity term is gated on the inverse mass being
+   strictly positive, so a zero-inverse-mass particle gets no gravity; its force term vanishes anyway.
+2. Compute the speed **once**, from the velocity step 1 produced.
+3. Damping: if the damping factor is positive **and** that speed exceeds the effective velocity,
+   multiply the velocity by exp(−factor · speed · Δt_sub).
+4. Cap: if the maximum-velocity component is positive **and** that **same pre-damping speed** exceeds
+   it, replace the velocity by the capped magnitude along its (damped) direction.
+5. x ← x + v·Δt_sub, with the velocity as it stands after 3–4.
+
+Accelerate, damp, cap, advance — and both tests read the step-2 speed, never the damped speed. §4.2
+is exact on this.
+
+**State forces are in the formula and always zero in practice.** The force array is read in step 1,
+but the caller clears particle and body forces **before every substep**. The subtlety: the solver
+reuses the *output* state's force array as its shared delta accumulator and the states swap after each
+substep, so step 1 reads the array the previous substep accumulated into — the explicit clear is the
+only thing stopping the previous substep's constraint delta from being injected as a force. Omitting
+it gives a silent, wrong feedback term.
+
+**Who is skipped.** Inactive particles return immediately and the delta application skips them too,
+so they are frozen. Zero-inverse-mass particles are **not** skipped: they get no acceleration but are
+still advanced by whatever velocity they carry, and since every constraint that could move them
+returns early on a zero inverse mass, the delta application re-derives the same velocity — a pinned
+particle drifts forever at its initial velocity, and is static only if that velocity is zero.
+
+### 10.10 Mass, rest data, and the pattern-length table
+
+**Masses are not only density × area ÷ 3; there is a base term.** Every cloth particle starts with a
+mass equal to the **configured fabric-thickness value** — 0.1 as shipped. Not a design choice: the
+construction helper passes the thickness/radius value into the **mass** argument of the
+particle-creation call, so the *radius* falls back to the model's own default particle radius (also
+0.1, which is why nothing visibly breaks) and the thickness number lands in the mass. Then, for
+**every** triangle, density × area ÷ 3 is **added** to each of its three vertices:
+
+  m = (fabric-thickness value) + Σ over incident triangles of ( density · area(T) ÷ 3 )
+
+with area(T) the **initial 3-D area** for ordinary triangles and the **pattern-space area** for
+stitch triangles, as §3.3 says. With shipped density 1.0 and garment-scale triangles the base term is
+comparable to or larger than the area sum, so using the area term alone gives inverse masses several
+times too large. That propagates into the inverse-mass-weighted gravity term (§10.1), the mass-scaled
+body-contact correction (§10.5) and every constraint denominator. Reproduce the base term literally,
+and keep the particle radius at 0.1 independently of it.
+
+Stitch-triangle areas come from a planar triangle reconstructed from the three stored pattern edge
+lengths. Non-positive areas are clamped to zero, those triangles are **dropped from the element
+list** with a printed warning, and contribute nothing to mass. There is no other mass contribution —
+nothing lumped from attachments, bending elements or springs.
+
+**Key form: ascending ordered pairs, one direction only.** The generator sorts each face's three
+**global** vertex indices ascending and writes exactly three entries — (lowest, middle),
+(middle, highest), (lowest, highest). No reversed duplicates. The value is the 2-D panel distance
+between the corresponding panel vertices, except that an edge which is a ground-truth seam edge has
+its length replaced by the ground-truth seam length. Both consumers match: the spring builder
+accumulates candidate pairs as **(min, max)** tuples in a set and looks up with that key, and the
+stitch-area routine sorts the triangle's indices and looks up the same three ascending pairs. So:
+ascending pair only, never both orders.
+
+**Coverage and missing pairs.** Entries are written **only for faces containing at least one stitch
+vertex**, and faces that degenerate to a point or line after stitching are skipped. The solver's own
+"stitch triangle" predicate is the same — any of the three vertices in the stitch set — so in a
+consistent pipeline every stitch triangle's three pairs exist. The two failure modes differ:
+
+- **A spring whose pair is missing** falls back silently to an ordinary distance constraint resting at
+  the **initial 3-D distance** between the particles (after the placement transform). This is the
+  normal case for most springs: only stitch-adjacent faces' edges carry pattern lengths, so the bulk
+  of the garment rests at its initial 3-D length and only the seam region contracts. That is the
+  precise scope of §4.8's "seam springs use the pattern-space length".
+- **A stitch triangle whose pair is missing** is a **hard failure**: the area routine indexes the
+  table with no fallback, so a missing key aborts construction. Keep that — it is the only guard that
+  the stitch-vertex set and the table agree.
+
+Caution: the table's keys are global box-mesh vertex indices, the solver's are particle indices
+offset by whatever already existed. The cloth is added first, so the offset is zero and they coincide;
+a port adding anything before the cloth must shift the table.
+
+### 10.11 When the cloth query mesh is refreshed, and with which positions
+
+Refreshed **once per substep**, as the substep's last action — after the whole iteration loop and
+after the delta application, outside every condition but "particles exist". The positions written are
+the **output of the last iteration** of that substep, i.e. the same array that becomes the next
+substep's input. Each particle writes the mesh point at its own index, so the mesh has one vertex per
+particle in the same order. The bounding hierarchy is refit immediately after, in the same place.
+
+At the frame-start detection pass the mesh points are those written at the end of the **previous
+frame's last substep** — identical to the frame-start particle positions the pass also reads from the
+state, so detection is self-consistent: what it reads from the mesh (§10.7) and from the state
+(§10.1) agree. Within a frame the mesh is current as of the last completed substep, but the **pairs
+and face indices** were fixed at frame start; the self-contact solves read vertex *positions* from
+the live solver array and only the face's *vertex indices* from the mesh, so a mid-frame refresh never
+changes which triangle a pair refers to. The §5 counters, reading mesh points directly, do see the
+latest substep.
+
+### 10.12 Everything else an implementer would get wrong
+
+#### Corrections to §1–§9
+
+- **§4.3, step 3.** A face rejected by the per-particle filter leaves the distance at its initialized
+  large value, so the particle gets **neither a contact nor the flag-2 drag mark**, not just no
+  contact. A filtered region can never be dragged out of the body.
+- **§4.3, "three-ray parity vote".** Not a parity test. Along each of +X, +Y, +Z (unbounded rays) it
+  takes the **first hit only** and asks whether it is back-facing; inside requires all three first
+  hits back-facing. A crossing-count parity test agrees on a simple watertight body and disagrees
+  wherever geometry is nested or self-overlapping. Also, this test does **not** raise the drag flag —
+  the signed closest-point distance does (§10.4); the vote only supplies the sign inside the drag
+  constraint.
+- **§4.6, "State read".** Substep input, not frame start. See §10.6.
+- **§4.1, step 7.** The drag solve is also gated on "more than one shape exists".
+- **§4.7, point–triangle response.** The denominator is **not** a four-body sum; the triangle-vertex
+  gradients collapse to −n for the face's first vertex and zero for the other two. See §10.2.
+- **§4.7, point–triangle detection.** Sidedness is measured from the triangle's **first vertex**, not
+  the closest point; the triangle's predicted motion is the **barycentric blend** of its vertices';
+  the band radius is the **queried particle's own**. **Edge–edge detection:** the endpoint rejection
+  multiplies **both** segment parameters by the **query edge's** length, so "within one radius of an
+  endpoint" holds only for the query edge.
+- **§3.3 / §4.8 (mass).** Masses carry a base term equal to the fabric-thickness value. See §10.10.
+- **§4.1 (per-frame passes).** Pass 2 (contact generation) and pass 4 (the piercing survey) write the
+  **same flag array**, so for a particle both deep inside the body and carrying a piercing spring,
+  **pass 4's flag 1 overwrites pass 2's flag 2** and it is dragged toward its own body part instead of
+  out of the body. Plain assignments, not atomic maxima.
+
+#### Additional exactnesses
+
+- **Buffer overflow corrupts the solve.** Both detection passes reserve their block of slots
+  atomically **before** checking capacity and, on overflow, return **without writing**. The buffers
+  are zeroed at the start of the pass, so reserved-but-unwritten slots read as "not filtered" with an
+  all-zero index tuple, and the count already includes them. The solves then process a point–triangle
+  pair of (particle 0, face 0) — with no own-face re-check at solve time, so particle 0 can be pushed
+  off a triangle it belongs to — and an edge–edge pair of four copies of particle 0 with a zero
+  recorded direction. The count may exceed the buffer size, but the solves launch over the buffer and
+  compare against the raw count, so nothing indexes out of range. Size the buffers as §6.27 does so
+  overflow never occurs, and do not "improve" the overflow path.
+- **Detection timestep** is the substep timestep **times** the substep count, as the caller computes
+  it; use that product, not an independently derived frame period.
+- **Gravity reaches the kernels only through graph re-capture** on GPU: the frame is a captured graph
+  that bakes the value, re-captured exactly on the frame whose index equals `zero_gravity_steps`, on
+  each body-smoothing frame, and on the frame the attachment is switched off (on CPU it is read per
+  launch). A port that caches a graph and forgets the re-capture runs gravity-free forever.
+- **Solver iterations default to one** (more being unnecessary when substepping), so "per iteration"
+  and "per substep" coincide, the multiplier arrays are zeroed immediately before their only use, and
+  the delta application's reference position is the substep's input.
+- **The spring set comes from the bending-edge list, not the mesh edge list.** Per interior edge (two
+  adjacent faces) five pairs enter a set: the shared edge plus the four outer edges of the two
+  adjacent triangles. The two **opposite** vertices are **not** connected — there is no diagonal or
+  shear spring. A triangle none of whose edges is interior contributes no springs. The two
+  constructions coincide on a well-connected mesh and differ at isolated triangles and thin strips.
+- **Bending elements exist only for edges with two adjacent faces**, rest angle zero for all. The
+  edge–edge duplicate check scans only the current query edge's own already-filled block, comparing
+  against the **second** pair of each entry in **reversed** order — it cannot see a duplicate from a
+  different query edge, which is correct. Both self-contact solves guard their denominator at 1e-5;
+  the body-contact normal and the equality-attachment normal are normalized differences, undefined
+  when the particle sits exactly on the surface or exactly on target, and unguarded. The rigid-body,
+  ground and restitution passes are no-ops here and restitution must stay disabled.
+
+#### Open
+
+Nothing material. Open: the numerical ratio of the base mass term to the area sum at each shipped
+resolution — §10.10's formula is exact, but the ratio depends on resolution-dependent triangle areas,
+so check it for your own mesh rather than assuming the base term is small. It is not.
+
+### 10.13 Provenance
+
+Fork files opened for §10 (reader S1c, the commit in §0): `warp/sim/collide.py`,
+`warp/sim/integrator_xpbd.py`, `warp/sim/integrator_euler.py`, `warp/sim/model.py`,
+`warp/sim/utils.py`. pygarment (MIT): `meshgen/garment.py`, `meshgen/boxmeshgen.py`,
+`meshgen/sim_config.py`, `meshgen/datasim_utils.py`. Two earlier reader sessions on the same
+questions (S1b) stalled on infrastructure timeouts and wrote nothing. No fork code appears in
+this section.
