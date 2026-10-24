@@ -24,6 +24,7 @@ Neckline depth
 - Pick the front neck drop for the neckline you see: crew 7-10 cm (fc_depth 0.38-0.55), scoop 10-14 cm (0.55-0.77), v-neck 12-20 cm (0.66-1.09), hoodie 6-9 cm (0.33-0.49). Nudge about 10% shallower at XS and 10% deeper at XXL.
 - The back neck drop is always small, 1.5-3 cm, so collar.bc_depth belongs near 0.08-0.16. Leaving it at 0 puts the back neckline on the shoulder line.
 - A tee or sweatshirt that is merely oversized still has a crew neckline; width, not depth, is what makes it baggy.
+- A crew / round neckline is collar.f_collar=CircleNeckHalf and collar.b_collar=CircleNeckHalf. That is the only shape that meets the centre front horizontally, so it is the only one that reads as round; every other shape puts a notch or a V at the centre front. Use VNeckHalf or TrapezoidNeckHalf only for a visible V, and CurvyNeckHalf, CircleArcNeckHalf or Bezier2NeckHalf only for a visible wide scoop.
 
 Reading the listing
 - Fit words (oversized, relaxed, baggy, boxy, wide, y2k) -> larger shirt.width, shirt.flare, sleeve.end_width, pants.width, pants.flare. Slim, fitted, skinny, tapered -> values near the low end.

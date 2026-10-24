@@ -46,6 +46,7 @@ COLLARLESS_STYLES = {None, "", "Turtle"}
 SIZE_LADDER = ("XS", "S", "M", "L", "XL", "XXL")
 VNECK_SHAPES = {"VNeckHalf", "TrapezoidNeckHalf"}
 SCOOP_SHAPES = {"CurvyNeckHalf", "CircleArcNeckHalf", "Bezier2NeckHalf"}
+CREW_SHAPE = "CircleNeckHalf"
 WEARER = "wearer_masc"
 
 ROLE_SLOT = {"hoodie": "upper", "tee": "upper", "sweats": "bottom", "jeans": "bottom"}
@@ -297,7 +298,25 @@ def clamp_neckline(values: dict[str, Any], schema: dict[str, dict], slot: str, e
         notes.append(f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({kind} {size or 'unsized'} {side} "
                      f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm"
                      + (f", slope +{adj:.2f}cm, schema floor {_fmt(node['range'][0])}" if adj else "") + ")")
-    return notes + clamp_neck_width(values, schema, kind)
+    return notes + clamp_crew_shape(values, schema, kind) + clamp_neck_width(values, schema, kind)
+
+
+def clamp_crew_shape(values: dict[str, Any], schema: dict[str, dict], kind: str) -> list[str]:
+    """Pin a crew to the one half-shape that meets the centre front horizontally (collars.py:68-77)."""
+    if kind != "crew":
+        return []
+    if _current(values, schema, "collar.component.style") not in COLLARLESS_STYLES:
+        return []
+    notes = []
+    for path in ("collar.f_collar", "collar.b_collar"):
+        if path not in schema:
+            continue
+        cur = _current(values, schema, path)
+        if cur == CREW_SHAPE:
+            continue
+        values[path] = CREW_SHAPE
+        notes.append(f"FORCE {path} {_fmt(cur)}->{CREW_SHAPE} (crew reads round only on a circle arc)")
+    return notes
 
 
 def enforce_slot(values: dict[str, Any], slot: str) -> list[str]:
@@ -487,7 +506,8 @@ def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
     was = {p: float(values[p]) for p in (front, back, width)}
     adj = front_offset(values, schema)
     notes = clamp_neckline(values, schema, slot, entry)
-    for p in (front, back, width, "collar.component.style", "collar.component.depth"):
+    for p in (front, back, width, "collar.component.style", "collar.component.depth",
+              "collar.f_collar", "collar.b_collar"):
         if p in values:
             _set(tree, p, values[p])
     path.write_text(json.dumps(doc, indent=2))
