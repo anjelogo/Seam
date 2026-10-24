@@ -39,6 +39,10 @@ NULLED = {"upper": ("meta.bottom",), "bottom": ("meta.upper",), "skirt": ("meta.
 # Neckline depth prior, in cm of front/back neck drop below the neck base.
 NECK_CM = {"crew": (7.0, 10.0), "scoop": (10.0, 14.0), "vneck": (12.0, 20.0), "hoodie": (6.0, 9.0)}
 BACK_NECK_CM = (1.5, 3.0)
+# Neckline width prior, in cm the drafted width may exceed the body neck width. V-necks and hoods are free.
+NECK_W_CM = {"crew": 4.0, "scoop": 8.0}
+# the prior is a bare-neckline rule; a rib band is still collarless, a lapel or hood sets its own width
+COLLARLESS_STYLES = {None, "", "Turtle"}
 SIZE_LADDER = ("XS", "S", "M", "L", "XL", "XXL")
 VNECK_SHAPES = {"VNeckHalf", "TrapezoidNeckHalf"}
 SCOOP_SHAPES = {"CurvyNeckHalf", "CircleArcNeckHalf", "Bezier2NeckHalf"}
@@ -169,8 +173,7 @@ def size_factor(size: str | None) -> float:
 
 
 @lru_cache(maxsize=None)
-def bust_line(wearer: str = WEARER) -> float:
-    """cm the collar depth fractions are measured against (GarmentCode body_params.py:25-29)."""
+def body_params(wearer: str = WEARER) -> dict:
     import yaml
 
     from drape._repo import RUNS
@@ -178,10 +181,65 @@ def bust_line(wearer: str = WEARER) -> float:
     path = RUNS / "bodies" / f"{wearer}.yaml"
     if not path.exists():
         path = schema_file().parent.parent / "bodies" / "mean_all.yaml"
-    body = yaml.safe_load(path.read_text())["body"]
+    return yaml.safe_load(path.read_text())["body"]
+
+
+def bust_line(wearer: str = WEARER) -> float:
+    """cm the collar depth fractions are measured against (GarmentCode body_params.py:25-29)."""
+    body = body_params(wearer)
     if "vert_bust_line" in body:
         return (1 - 1 / 3) * body["vert_bust_line"] + 1 / 3 * body["bust_line"]
     return float(body["bust_line"])
+
+
+def neck_width_span(wearer: str = WEARER) -> tuple[float, float]:
+    """The cm the collar width fraction spans, 0 to 1 (GarmentCode bodice.py:234-235)."""
+    body = body_params(wearer)
+    return float(body["neck_w"]), float(body["shoulder_w"]) - 4.0
+
+
+def width_cm(frac: float, lo: float, hi: float) -> float:
+    """cm of drafted neckline width for a collar.width fraction (GarmentCode bodice.py:237-240)."""
+    return lo + frac * (hi - lo) if frac >= 0 else lo * (1 + frac)
+
+
+def front_depth_adj(upper: str, shirt_width: float, collar_frac: float, wearer: str = WEARER) -> float:
+    """cm GarmentCode adds on top of fc_depth for the shoulder slope (bodice.py:241-243).
+
+    f_depth_adj = tan(_shoulder_incl) * (ftorso.get_width(0) - width / 2), where get_width(0) is
+    shirt.width * (bust - back_width) / 2 for a Shirt (tee.py:27-30,64-65 over base_classes.py:35)
+    and shoulder_w / 2 for a FittedShirt, which does not override get_width.
+    """
+    import numpy as np
+
+    body = body_params(wearer)
+    half = (shirt_width * (body["bust"] - body["back_width"]) / 2 if upper == "Shirt"
+            else float(body["shoulder_w"]) / 2)
+    width = width_cm(collar_frac, *neck_width_span(wearer))
+    return float(np.tan(np.deg2rad(body["shoulder_incl"])) * (half - width / 2))
+
+
+def clamp_neck_width(values: dict[str, Any], schema: dict[str, dict], kind: str) -> list[str]:
+    """Hold the drafted neckline width inside the prior. GarmentCode measures it off the back panel."""
+    path = "collar.width"
+    if kind not in NECK_W_CM or path not in schema:
+        return []
+    if _current(values, schema, "collar.component.style") not in COLLARLESS_STYLES:
+        return []
+    lo, hi = neck_width_span()
+    band = (lo, lo + NECK_W_CM[kind])
+    cur = float(_current(values, schema, path))
+    cm = width_cm(cur, lo, hi)
+    if band[0] - 1e-3 <= cm <= band[1] + 1e-3:
+        return []
+    want = min(max(cm, band[0]), band[1])
+    node = schema[path]
+    frac = round(min(max((want - lo) / (hi - lo), float(node["range"][0])), float(node["range"][-1])), 6)
+    got = width_cm(frac, lo, hi)
+    values[path] = frac
+    verb = "CLAMP" if abs(got - want) <= 1e-3 else "UNREACHABLE"
+    return [f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({kind} width {cm:.2f}cm->{got:.2f}cm, "
+            f"band {band[0]:.2f}-{band[1]:.2f}cm)"]
 
 
 def _current(values: dict[str, Any], schema: dict[str, dict], path: str) -> Any:
@@ -201,6 +259,17 @@ def neckline_kind(values: dict[str, Any], schema: dict[str, dict], entry: dict) 
     return "crew"
 
 
+def front_offset(values: dict[str, Any], schema: dict[str, dict]) -> float:
+    """The slope term, for a bare neckline only: a hood or lapel sets its own opening."""
+    if _current(values, schema, "collar.component.style") not in COLLARLESS_STYLES:
+        return 0.0
+    return front_depth_adj(
+        str(_current(values, schema, "meta.upper")),
+        float(_current(values, schema, "shirt.width")),
+        float(_current(values, schema, "collar.width")),
+    )
+
+
 def clamp_neckline(values: dict[str, Any], schema: dict[str, dict], slot: str, entry: dict) -> list[str]:
     """Hold the neck drop inside the prior for this neckline and size, working in cm."""
     if slot != "upper" or "collar.fc_depth" not in schema:
@@ -210,24 +279,25 @@ def clamp_neckline(values: dict[str, Any], schema: dict[str, dict], slot: str, e
     size = (entry.get("size_normalized") or "").strip().upper()
     scale = size_factor(size)
     notes = []
-    for path, band, side, scaled in (
-        ("collar.fc_depth", NECK_CM[kind], "front", True),
-        ("collar.bc_depth", BACK_NECK_CM, "back", False),
+    for path, band, side, scaled, adj in (
+        ("collar.fc_depth", NECK_CM[kind], "front", True, front_offset(values, schema)),
+        ("collar.bc_depth", BACK_NECK_CM, "back", False, 0.0),
     ):
         node = schema[path]
         lo, hi = (band[0] * scale, band[1] * scale) if scaled else band
         cur = float(_current(values, schema, path))
-        cm = cur * bl
+        cm = cur * bl + adj
         if lo - 1e-3 <= cm <= hi + 1e-3:
             continue
         want = min(max(cm, lo), hi)
-        frac = round(min(max(want / bl, float(node["range"][0])), float(node["range"][-1])), 6)
-        got = frac * bl
+        frac = round(min(max((want - adj) / bl, float(node["range"][0])), float(node["range"][-1])), 6)
+        got = frac * bl + adj
         values[path] = frac
         verb = "CLAMP" if abs(got - want) <= 1e-3 else "UNREACHABLE"
         notes.append(f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({kind} {size or 'unsized'} {side} "
-                     f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm)")
-    return notes
+                     f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm"
+                     + (f", slope +{adj:.2f}cm, schema floor {_fmt(node['range'][0])}" if adj else "") + ")")
+    return notes + clamp_neck_width(values, schema, kind)
 
 
 def enforce_slot(values: dict[str, Any], slot: str) -> list[str]:
@@ -413,17 +483,11 @@ def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
     kind = neckline_kind(values, schema, entry)
     meta_path = item_dir / "params_meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    was = {p: float(values[p]) for p in (front, back)}
+    width = "collar.width"
+    was = {p: float(values[p]) for p in (front, back, width)}
+    adj = front_offset(values, schema)
     notes = clamp_neckline(values, schema, slot, entry)
-    # an earlier run injected a Turtle rib band into collarless tops; undo it where the log says we did
-    if values.get("collar.component.style") == "Turtle" and any(
-            n.startswith("NECKBAND") for n in meta.get("clamps") or []):
-        depth = schema["collar.component.depth"]["v"]
-        notes.append(f"STRIP NECKBAND collar.component.style Turtle->null, "
-                     f"depth {_fmt(values.get('collar.component.depth'))}->{_fmt(depth)}")
-        values["collar.component.style"] = None
-        values["collar.component.depth"] = depth
-    for p in (front, back, "collar.component.style", "collar.component.depth"):
+    for p in (front, back, width, "collar.component.style", "collar.component.depth"):
         if p in values:
             _set(tree, p, values[p])
     path.write_text(json.dumps(doc, indent=2))
@@ -433,8 +497,10 @@ def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
     meta_path.write_text(json.dumps(meta, indent=2))
     return {
         "safe": entry["safe"], "kind": kind, "size": (entry.get("size_normalized") or "").upper(),
-        "front_before_cm": was[front] * bl, "front_after_cm": float(values[front]) * bl,
-        "back_before_cm": was[back] * bl, "back_after_cm": float(values[back]) * bl, "notes": notes,
+        "front_before_cm": was[front] * bl + adj, "front_after_cm": float(values[front]) * bl + adj,
+        "back_before_cm": was[back] * bl, "back_after_cm": float(values[back]) * bl,
+        "width_before_cm": width_cm(was[width], *neck_width_span()),
+        "width_after_cm": width_cm(float(values[width]), *neck_width_span()), "notes": notes,
     }
 
 
@@ -472,11 +538,12 @@ def main() -> None:
     design = load_design()
     if a.reclamp:
         rows = [r for r in (reclamp(e, inputs, design) for e in entries) if r]
-        print(f"{'safe':<20}{'neckline':<9}{'size':<6}{'front cm':<18}{'back cm':<18}")
+        print(f"{'safe':<20}{'neckline':<9}{'size':<6}{'front cm':<18}{'back cm':<18}{'width cm':<18}")
         for r in rows:
             print(f"{r['safe']:<20}{r['kind']:<9}{r['size'] or '?':<6}"
                   f"{r['front_before_cm']:.2f} -> {r['front_after_cm']:<9.2f}"
-                  f"{r['back_before_cm']:.2f} -> {r['back_after_cm']:<9.2f}")
+                  f"{r['back_before_cm']:.2f} -> {r['back_after_cm']:<9.2f}"
+                  f"{r['width_before_cm']:.2f} -> {r['width_after_cm']:<9.2f}")
             for note in r["notes"]:
                 print(f"  {note}")
         print(f"ok: reclamped {len(rows)} items -> {inputs}/<safe>/params.json (bust_line {bust_line():.4f} cm)")
