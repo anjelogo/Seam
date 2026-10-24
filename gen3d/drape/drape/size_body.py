@@ -29,6 +29,86 @@ CHART = {
 }
 
 
+BAND_CM = 3.0
+CROP_WORDS = ("crop", "cropped")
+LENGTH_CATEGORIES = ("tee", "longsleeve")
+
+
+def chart_length(slot: str, size: str | None) -> float | None:
+    row = CHART.get((slot, (size or "").upper()))
+    return row[2] if row else None
+
+
+# mirrors the Shirt torso math (tee.py:34,39,45 over bodice.py:241-243); re-derive if the vendor changes it
+def drafted_length_cm(body: dict[str, float], shirt_length: float, shirt_width: float,
+                      collar_width_cm: float) -> float:
+    import numpy as np
+
+    sh_tan = float(np.tan(np.deg2rad(body["shoulder_incl"])))
+    frac = (body["bust"] - body["back_width"]) / 2 / body["bust"]
+    half = shirt_width * (body["bust"] - body["back_width"]) / 2
+    fb_diff = (frac - (0.5 - frac)) * body["bust"]
+    return shirt_length * body["waist_line"] + sh_tan * (half - collar_width_cm / 2 - fb_diff)
+
+
+def clamp_body_length(values: dict, schema: dict, entry: dict, body: dict[str, float],
+                      tags: tuple[str, ...] = ()) -> list[str]:
+    from drape.params import _current, _fmt, width_cm
+
+    path = "shirt.length"
+    if path not in schema or _current(values, schema, "meta.upper") != "Shirt":
+        return []
+    if (entry.get("category") or "").strip().lower() not in LENGTH_CATEGORIES:
+        return []
+    size = (entry.get("size_normalized") or "").strip().upper()
+    target = chart_length("top", size)
+    if target is None:
+        return []
+    text = " ".join([entry.get("title") or "", entry.get("fit") or "", *tags]).lower()
+    if any(w in text for w in CROP_WORDS):
+        return [f"SKIP {path} (listing says cropped, chart {target:.1f}cm not the intent)"]
+
+    sized = resize(body, "top", size)
+    node = schema[path]
+    cur = float(_current(values, schema, path))
+    collar = width_cm(float(_current(values, schema, "collar.width")),
+                      sized["neck_w"], sized["shoulder_w"] - 4.0)
+    width = float(_current(values, schema, "shirt.width"))
+    cm = drafted_length_cm(sized, cur, width, collar)
+    lo, hi = target - BAND_CM, target + BAND_CM
+    if lo - 1e-3 <= cm <= hi + 1e-3:
+        return []
+    want = min(max(cm, lo), hi)
+    adj = cm - cur * sized["waist_line"]
+    frac = round(min(max((want - adj) / sized["waist_line"], float(node["range"][0])),
+                     float(node["range"][-1])), 6)
+    got = drafted_length_cm(sized, frac, width, collar)
+    values[path] = frac
+    verb = "CLAMP" if abs(got - want) <= 1e-3 else "UNREACHABLE"
+    return [f"{verb} {path} {_fmt(cur)}->{_fmt(frac)} ({size or 'unsized'} body length "
+            f"{cm:.2f}cm->{got:.2f}cm, band {lo:.2f}-{hi:.2f}cm, slope +{adj:.2f}cm)"]
+
+
+def clamp_design_for_size(design: dict, item: dict, size: str, wearer_yaml) -> list[str]:
+    from drape.params import leaves, load_design, slice_schema
+
+    tags = item.get("tags") or {}
+    entry = {
+        "size_normalized": size,
+        "category": tags.get("category"),
+        "fit": tags.get("fit"),
+        "title": (item.get("listing") or {}).get("title"),
+    }
+    schema = slice_schema(load_design(), "upper")
+    values = {p: n["v"] for p, n in leaves(design).items() if p in schema}
+    body = yaml.safe_load(open(wearer_yaml).read())["body"]
+    extra = tuple(t for t in (*(tags.get("style_tags") or []), tags.get("era")) if t)
+    notes = clamp_body_length(values, schema, entry, body, extra)
+    if notes and "shirt.length" in values:
+        design["shirt"]["length"]["v"] = values["shirt.length"]
+    return notes
+
+
 def resize(body: dict[str, float], slot: str, size: str | None) -> dict[str, float]:
     row = CHART.get((slot, (size or "").upper()))
     if row is None:

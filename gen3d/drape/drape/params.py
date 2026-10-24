@@ -13,6 +13,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from drape.size_body import clamp_body_length
+
 MODEL = "claude-sonnet-5-5"
 MAX_TOKENS = 4096
 PHOTO_MAX = 1024
@@ -454,6 +456,7 @@ def ask(entry: dict, item_dir: Path, design: dict) -> dict:
 
     clamps += enforce_slot(values, slot)
     clamps += clamp_neckline(values, schema, slot, entry)
+    clamps += clamp_body_length(values, schema, entry, body_params(), tuple(_style_tags(item_dir)))
     return {
         "slot": slot, "values": values, "clamps": clamps, "invalid": invalid, "raw": text, "retried": retried,
         "input_tokens": in_tok, "output_tokens": out_tok, "wall_seconds": round(time.perf_counter() - start, 2),
@@ -506,8 +509,9 @@ def reclamp(entry: dict, inputs: Path, design: dict) -> dict | None:
     was = {p: float(values[p]) for p in (front, back, width)}
     adj = front_offset(values, schema)
     notes = clamp_neckline(values, schema, slot, entry)
+    notes += clamp_body_length(values, schema, entry, body_params(), tuple(_style_tags(item_dir)))
     for p in (front, back, width, "collar.component.style", "collar.component.depth",
-              "collar.f_collar", "collar.b_collar"):
+              "collar.f_collar", "collar.b_collar", "shirt.length"):
         if p in values:
             _set(tree, p, values[p])
     path.write_text(json.dumps(doc, indent=2))

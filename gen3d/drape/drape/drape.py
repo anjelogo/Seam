@@ -358,6 +358,7 @@ def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str |
                    pose: float | None = None, role: str | None = None, base: str = "masc",
                    sliders: dict | None = None) -> tuple[Path, str, str]:
     from drape import pattern as pattern_mod
+    from drape import size_body
 
     items = pattern_mod.load_items(inputs, safe)
     if not items:
@@ -369,6 +370,11 @@ def ensure_pattern(inputs: Path, bodies: Path, out: Path, safe: str, size: str |
     stress = pattern_mod.apply_stress(design, role)
     sim_body, tag = posed_wearer(bodies, wearer, base, sliders, pose)
     body_tag = pattern_mod.body_tag_for(entry["item"], size, bodies, wearer, pose=tag)
+    listed = ((entry["item"].get("tags") or {}).get("size_normalized") or "").upper()
+    if size and size.upper() != listed:
+        posed = bodies / f"{wearer}{'_' + tag if tag else ''}.yaml"
+        for note in size_body.clamp_design_for_size(design, entry["item"], size.upper(), posed):
+            print(f"  {note}")
     name = f"{safe}__{body_tag}{stress}"
     spec = out / safe / "pattern" / name / f"{name}_specification.json"
     if not spec.exists():

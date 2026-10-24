@@ -220,6 +220,10 @@ def main() -> None:
         if "design" in design:
             design = design["design"]
         stress = apply_stress(design, roles.get(safe))
+        if args.size and args.size.upper() != ((item.get("tags") or {}).get("size_normalized") or "").upper():
+            from drape.size_body import clamp_design_for_size
+            for note in clamp_design_for_size(design, item, args.size.upper(), args.bodies / f"{args.wearer}.yaml"):
+                print(f"  {note}")
         body_tag = body_tag_for(item, args.size, args.bodies, args.wearer)
         body_yaml = args.bodies / f"{body_tag}.yaml"
         if not body_yaml.exists():
