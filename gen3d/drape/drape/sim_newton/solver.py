@@ -3,7 +3,6 @@ import warp as wp
 from newton._src.solvers.xpbd.kernels import (
     apply_particle_deltas,
     bending_constraint,
-    solve_particle_shape_contacts,
     solve_springs,
 )
 
@@ -18,6 +17,7 @@ class Solver:
         self.params = params
         self.frame_dt = 1.0 / float(config.sim_fps)
         self.sub_dt = self.frame_dt / params.substeps
+        self.detect_dt = self.sub_dt * params.substeps    # §10.12, the product as computed
         self.n_particles = ctx.model.particle_count
         self.n_springs = ctx.model.spring_count
         self.n_edges = ctx.model.edge_count
@@ -44,15 +44,15 @@ class Solver:
             self.invalidate_graph()
 
         if not self.use_graph:
-            self._frame_body(self.frame_dt, self.sub_dt)
+            self._frame_body(self.detect_dt, self.sub_dt)
             return
         if self.graph is None:
             with wp.ScopedCapture() as capture:
-                self._frame_body(self.frame_dt, self.sub_dt)
+                self._frame_body(self.detect_dt, self.sub_dt)
             self.graph = capture.graph
         wp.capture_launch(self.graph)
 
-    def _frame_body(self, frame_dt: float, sub_dt: float) -> None:
+    def _frame_body(self, detect_dt: float, sub_dt: float) -> None:
         ctx, c = self.ctx, self.c
         wp.copy(ctx.x_frame0, ctx.state_in.particle_q)
         wp.copy(ctx.v_frame0, ctx.state_in.particle_qd)
@@ -60,8 +60,9 @@ class Solver:
         c.body.generate()
         if ctx.global_collision_filter:
             c.self_contact.piercing_survey()
-        c.self_contact.detect_edge_edge(frame_dt)
-        c.self_contact.detect_point_triangle(frame_dt)
+        if self.n_springs:
+            c.self_contact.detect_edge_edge(detect_dt)
+        c.self_contact.detect_point_triangle(detect_dt)
         for _ in range(self.params.substeps):
             self._substep(sub_dt)
 
@@ -75,27 +76,12 @@ class Solver:
         c.attach.zero_lambdas()
         ctx.delta.zero_()
 
-        wp.launch(
-            solve_particle_shape_contacts,
-            dim=self.params.soft_contact_max,
-            inputs=[
-                ctx.state_out.particle_q, ctx.state_out.particle_qd, model.particle_inv_mass,
-                model.particle_radius, model.particle_flags,
-                model.body_q, model.body_qd, model.body_com, model.body_inv_mass, model.body_inv_inertia,
-                model.body_flags, model.shape_body, model.shape_material_mu,
-                model.particle_mu, 0.0,
-                ctx.soft_contact_count, ctx.soft_contact_particle, ctx.soft_contact_shape,
-                ctx.soft_contact_body_pos, ctx.soft_contact_body_vel, ctx.soft_contact_normal,
-                self.params.soft_contact_max, dt, self.params.soft_contact_relaxation,
-                ctx.delta, ctx.body_delta,
-            ],
-            device=model.device,
-        )
+        c.body.solve(dt, self.params.soft_contact_relaxation)
         if ctx.cloth_reference_drag:
             c.drag.solve(dt)
         if ctx.enable_triangle_particle_collisions:
             c.self_contact.solve_point_triangle()
-        if ctx.enable_edge_edge_collisions:
+        if self.n_springs and ctx.enable_edge_edge_collisions:
             c.self_contact.solve_edge_edge()
         if self.n_springs:
             wp.launch(

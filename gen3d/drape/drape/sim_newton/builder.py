@@ -233,7 +233,7 @@ def add_cloth_sewing(builder: "newton.ModelBuilder", cloth: ClothData, config) -
     p_start = builder.particle_count
     for p in verts:
         builder.add_particle(pos=(float(p[0]), float(p[1]), float(p[2])), vel=(0.0, 0.0, 0.0),
-                             mass=0.0, radius=radius)
+                             mass=radius, radius=radius)
 
     t_start = len(builder.tri_indices)
     areas = builder.add_triangles(
@@ -258,7 +258,10 @@ def add_cloth_sewing(builder: "newton.ModelBuilder", cloth: ClothData, config) -
     if cloth.orig_lens:
         def side(u: int, w: int) -> float:
             length = cloth.rest_length(u, w)
-            return length if length is not None else float(np.linalg.norm(verts[u] - verts[w]))
+            if length is None:
+                # §10.10: a stitch triangle with no pattern pair aborts; only springs fall back
+                raise StitchGeometryError(f"stitch triangle edge ({u}, {w}) has no pattern length")
+            return length
 
         for fi in np.flatnonzero(stitch):
             i, j, k = (int(x) for x in sorted(faces[fi]))
@@ -279,7 +282,8 @@ def add_cloth_sewing(builder: "newton.ModelBuilder", cloth: ClothData, config) -
         builder.tri_poses[ei] = rest_pose[fi].tolist()
         builder.tri_areas[ei] = float(rest_area[fi])
 
-    mass = np.zeros(n_v, dtype=np.float64)
+    # §10.10: every particle carries a base mass equal to the fabric-thickness value
+    mass = np.full(n_v, radius, dtype=np.float64)
     share = np.repeat(rest_area * float(config.garment_density) / 3.0, 3)
     np.add.at(mass, faces.reshape(-1), share)
     for i in range(n_v):
