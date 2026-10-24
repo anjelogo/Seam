@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .builder import ClothData, Ctx, SimParams
 
 UNBOUNDED = 1.0e6
+SEARCH_RADIUS = 1.0e3
 NO_REFERENCE = -1
 NO_FILTER = -1
 FLAG_CLOTH_CLOTH = 1
@@ -341,8 +342,8 @@ class PanelAssignment:
 
 
 @wp.func
-def inside_reference_body(mesh: wp.uint64, p: wp.vec3, axes: wp.array(dtype=wp.vec3)) -> bool:
-    # §4.3 three-ray parity vote, unanimity required
+def inside_whole_body(mesh: wp.uint64, p: wp.vec3, axes: wp.array(dtype=wp.vec3)) -> bool:
+    # §10.12 first hit only along each axis, inside needs all three back-facing
     votes = int(0)
     for k in range(3):
         hit = wp.mesh_query_ray(mesh, p, axes[k], UNBOUNDED)
@@ -358,7 +359,7 @@ def drag_particles(
     ref_label: wp.array(dtype=wp.int32),
     ref_mesh_ids: wp.array(dtype=wp.uint64),
     body_mesh: wp.uint64,
-    x0: wp.array(dtype=wp.vec3),
+    x_sub_in: wp.array(dtype=wp.vec3),
     particle_radius: wp.array(dtype=float),
     particle_flags: wp.array(dtype=wp.int32),
     margin: float,
@@ -375,25 +376,32 @@ def drag_particles(
     if label < 0:
         return
 
-    px = x0[tid]
+    px = x_sub_in[tid]
+    mesh = body_mesh
     if flag == FLAG_CLOTH_CLOTH:
         mesh = ref_mesh_ids[label]
-        query = wp.mesh_query_point_no_sign(mesh, px, UNBOUNDED)
-        if not query.result:
+    query = wp.mesh_query_point_no_sign(mesh, px, SEARCH_RADIUS)
+    if not query.result:
+        return
+    target = wp.mesh_eval_position(mesh, query.face, query.u, query.v)
+    gap = target - px
+
+    # §10.6: magnitude from the unsigned query, sign from the whole-body vote
+    error = wp.length(gap)
+    if inside_whole_body(body_mesh, px, axes):
+        error = -error
+
+    if flag == FLAG_CLOTH_CLOTH:
+        if error <= margin + particle_radius[tid]:
             return
-        target = wp.mesh_eval_position(mesh, query.face, query.u, query.v)
-        if wp.length(target - px) <= margin + particle_radius[tid]:
-            return
-        # full projection onto the part, no compliance: the §4.9 cap is the only limit
-        wp.atomic_add(delta, tid, target - px)
     elif flag == FLAG_INSIDE_BODY:
-        if not inside_reference_body(body_mesh, px, axes):
+        if error >= 0.0:
             return
-        query = wp.mesh_query_point_no_sign(body_mesh, px, UNBOUNDED)
-        if not query.result:
-            return
-        target = wp.mesh_eval_position(body_mesh, query.face, query.u, query.v)
-        wp.atomic_add(delta, tid, target - px)
+    else:
+        return
+
+    # full projection onto the target, no compliance: the §4.9 cap is the only limit
+    wp.atomic_add(delta, tid, gap)
 
 
 class PanelDrag:
@@ -419,7 +427,7 @@ class PanelDrag:
                 ctx.ref_label,
                 ctx.ref_mesh_ids,
                 ctx.body_mesh.id,
-                ctx.x_frame0,
+                ctx.state_in.particle_q,
                 ctx.model.particle_radius,
                 ctx.model.particle_flags,
                 self.margin,
