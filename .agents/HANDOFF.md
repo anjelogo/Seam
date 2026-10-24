@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-23 19:40 · anjelo · gen3d drape tee neck
+- branch anjelo/tee-neck (on tee-fix): tees/longsleeves now draft at the size chart's body length ±3 cm (drape/size_body.py, model-free `--reclamp`, re-clamped per `--size`; the black tee was 17.9 cm short); contact-sheet white specks fixed in drape/sheet.py (the GLBs were clean); crew necks pinned to CircleNeckHalf in the prompt and `--reclamp`
+- crew-neck V traced to the straight rib-band halves meeting at centre front as chords; an arc-cut band reads round in blind review but fails the frozen neck_ring/neck_drop gates, so the straight band still ships (arc band at 34396c5, numbers in gen3d/drape/RESULTS_TEE_FIX.md "Neckline round")
+- mannequin and asset GLBs unchanged on this branch; merge checklist for the whole drape chain in gen3d/drape/MERGE.md
+- action needed: none (gen3d drape only; nothing wired into prod)
+
 ## 2026-10-23 17:30 · anjelo · gen3d drape tee fix
 - tee-slide root cause found and fixed (branch anjelo/tee-fix): drape/body.py measured 6 GarmentCode body keys from the arm-cap apex instead of the nape (head_l −4.87 cm ⇒ every top drafted/placed ~4.9 cm below the shoulders); bodies + patterns re-cut, shoulder cap coverage now 100/100 both poses on all 8 tops + XS/M/XL under new un-gameable gates (drape.coverage + drape.sheet contact sheets; old drape.collar kept for reference — it was the metric that lied)
 - tee-collar's v9a defaults REVERTED (no neckband injection, no ring-hold/stiffness category defaults); rib neckband is now a per-item pattern feature (listing-photo-verified, stored params) cut at 0.85× the neckline (stretch-on, Turtle-scoped patch in drape/pattern.py); the neckline prior now cuts its declared depth (params.py includes GC's shoulder-slope f_depth_adj)
