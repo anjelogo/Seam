@@ -60,18 +60,17 @@ def _ring_neckband(spec: dict) -> list[str]:
         arc = edge_curve(bp["edges"][band["edge"]], np.asarray(bp["vertices"], float))[1]
         verts = np.asarray(bp["vertices"], float)
         seam = bp["edges"][band["edge"]]["endpoints"]
-        free = next(e["endpoints"] for i, e in enumerate(bp["edges"])
-                    if not set(e["endpoints"]) & set(seam))
-        depth = float(np.linalg.norm(verts[free[0]] - verts[seam[0]]))
-        depth = min(depth, rad * 0.9)
+        sides = [set(e["endpoints"]) for e in bp["edges"]]
+        free = next(e["endpoints"] for e in bp["edges"] if not set(e["endpoints"]) & set(seam))
+        near = next(f for f in free if {seam[0], f} in sides)
+        depth = float(np.linalg.norm(verts[near] - verts[seam[0]]))
         sweep = arc / rad
-        if sweep >= np.pi or sweep <= 0:
+        if sweep >= np.pi or sweep <= 0 or depth >= rad:
             continue
         chord = 2 * rad * np.sin(sweep / 2)
         centre = np.array([chord / 2, np.sqrt(max(rad**2 - (chord / 2) ** 2, 0.0))])
         a, b = np.array([0.0, 0.0]), np.array([chord, 0.0])
         scale = (rad - depth) / rad
-        sides = [set(e["endpoints"]) for e in bp["edges"]]
         verts[seam[0]], verts[seam[1]] = a, b
         for fv in free:
             sv = next(s for s in seam if {s, fv} in sides)
@@ -80,7 +79,7 @@ def _ring_neckband(spec: dict) -> list[str]:
         bp["edges"][band["edge"]]["curvature"] = {"type": "circle", "params": [rad, 0, 1]}
         fi = next(i for i, e in enumerate(bp["edges"]) if e["endpoints"] == list(free))
         bp["edges"][fi]["curvature"] = {"type": "circle", "params": [rad - depth, 0, 0]}
-        notes.append(f"{band['panel']} R{rad:.2f} sweep {np.degrees(sweep):.1f}deg")
+        notes.append(f"{band['panel']} R{rad:.2f} sweep {np.degrees(sweep):.1f}deg depth {depth:.2f}")
     return notes
 
 
