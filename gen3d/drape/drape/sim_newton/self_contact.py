@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 _EPS = 1.0e-6
 _DET_EPS = 1.0e-12
+_DENOM_EPS = 1.0e-5
+_SEG_EPS = 1.0e-3
 
 
 @wp.func
@@ -53,6 +55,40 @@ def _tri_bary(a: wp.vec3, b: wp.vec3, c: wp.vec3, p: wp.vec3):
     v = vb * denom
     w = vc * denom
     return wp.vec3(1.0 - v - w, v, w)
+
+
+@wp.func
+def _seg_seg(p0: wp.vec3, p1: wp.vec3, q0: wp.vec3, q1: wp.vec3):
+    d1 = p1 - p0
+    d2 = q1 - q0
+    rv = p0 - q0
+    a = wp.dot(d1, d1)
+    e = wp.dot(d2, d2)
+    f = wp.dot(d2, rv)
+    if a <= _SEG_EPS and e <= _SEG_EPS:
+        return wp.vec2(0.0, 0.0)
+    if a <= _SEG_EPS:
+        return wp.vec2(0.0, wp.clamp(f / e, 0.0, 1.0))
+    c = wp.dot(d1, rv)
+    if e <= _SEG_EPS:
+        return wp.vec2(wp.clamp(-c / a, 0.0, 1.0), 0.0)
+    b = wp.dot(d1, d2)
+    denom = a * e - b * b
+    s = float(0.0)
+    if denom != 0.0:
+        s = wp.clamp((b * f - c * e) / denom, 0.0, 1.0)
+    t = (b * s + f) / e
+    if t < 0.0:
+        return wp.vec2(wp.clamp(-c / a, 0.0, 1.0), 0.0)
+    if t > 1.0:
+        return wp.vec2(wp.clamp((b - c) / a, 0.0, 1.0), 1.0)
+    return wp.vec2(s, t)
+
+
+@wp.func
+def _predict_dx(v: wp.vec3, w: float, g: wp.vec3, dt: float):
+    # §10.1: no half, and gravity carries the inverse mass
+    return v * dt + g * (w * dt * dt)
 
 
 @wp.func
@@ -182,6 +218,7 @@ def _detect_pt_kernel(
     v0: wp.array(dtype=wp.vec3),
     mesh: wp.uint64,
     tri: wp.array(dtype=wp.int32),
+    inv_mass: wp.array(dtype=wp.float32),
     radius: wp.array(dtype=wp.float32),
     gravity: wp.array(dtype=wp.vec3),
     flag_pierced: wp.array(dtype=wp.int32),
@@ -205,7 +242,7 @@ def _detect_pt_kernel(
     h = box_radii * r
     ext = wp.vec3(h, h, h)
     g = gravity[0]
-    dx_p = (v0[p] + g * dt) * dt
+    dx_p = _predict_dx(v0[p], inv_mass[p], g, dt)
     band = band_radii * r
     base = p * slots
 
@@ -215,39 +252,43 @@ def _detect_pt_kernel(
     while wp.mesh_query_next(query, face):
         if count >= slots:
             wp.atomic_add(overflow, 0, 1)
-        else:
-            slot = base + count
-            i0 = tri[3 * face + 0]
-            i1 = tri[3 * face + 1]
-            i2 = tri[3 * face + 2]
-            pt_tri[slot] = face
-            pt_side[slot] = 0
-            pt_filtered[slot] = wp.uint8(1)
+            break
+        slot = base + count
+        i0 = tri[3 * face + 0]
+        i1 = tri[3 * face + 1]
+        i2 = tri[3 * face + 2]
+        pt_tri[slot] = face
+        pt_side[slot] = 0
+        pt_filtered[slot] = wp.uint8(1)
 
-            if i0 != p and i1 != p and i2 != p:
-                a = x0[i0]
-                b = x0[i1]
-                c = x0[i2]
-                ncr = wp.cross(b - a, c - a)
-                nl = wp.length(ncr)
-                if nl > _EPS:
-                    nrm = ncr / nl
-                    side = int(0)
-                    if wp.dot(nrm, x - a) < 0.0:
-                        side = 1
-                        nrm = -nrm
-                    pt_side[slot] = side
+        if i0 != p and i1 != p and i2 != p:
+            a = x0[i0]
+            b = x0[i1]
+            c = x0[i2]
+            ncr = wp.cross(b - a, c - a)
+            nl = wp.length(ncr)
+            if nl > _EPS:
+                nrm = ncr / nl
+                side = int(0)
+                if wp.dot(nrm, x - a) < 0.0:
+                    side = 1
+                    nrm = -nrm
+                pt_side[slot] = side
 
-                    w = _tri_bary(a, b, c, x)
-                    sep = x - (a * w[0] + b * w[1] + c * w[2])
-                    dist = wp.length(sep)
-                    dir = nrm
-                    if dist > _EPS:
-                        dir = sep / dist
-                    dx_t = (v0[i0] * w[0] + v0[i1] * w[1] + v0[i2] * w[2] + g * dt) * dt
-                    if dist + wp.dot(dx_p - dx_t, dir) < band:
-                        pt_filtered[slot] = wp.uint8(0)
-            count += 1
+                w = _tri_bary(a, b, c, x)
+                sep = (a * w[0] + b * w[1] + c * w[2]) - x
+                dist = wp.length(sep)
+                e = -nrm
+                if dist > _EPS:
+                    e = sep / dist
+                dx_q = (
+                    _predict_dx(v0[i0], inv_mass[i0], g, dt) * w[0]
+                    + _predict_dx(v0[i1], inv_mass[i1], g, dt) * w[1]
+                    + _predict_dx(v0[i2], inv_mass[i2], g, dt) * w[2]
+                )
+                if dist - wp.dot(dx_p, e) + wp.dot(dx_q, e) < band:
+                    pt_filtered[slot] = wp.uint8(0)
+        count += 1
 
     pt_block_count[p] = count
 
@@ -259,6 +300,7 @@ def _detect_ee_kernel(
     mesh: wp.uint64,
     tri: wp.array(dtype=wp.int32),
     springs: wp.array(dtype=wp.int32),
+    inv_mass: wp.array(dtype=wp.float32),
     radius: wp.array(dtype=wp.float32),
     gravity: wp.array(dtype=wp.vec3),
     flag_pierced: wp.array(dtype=wp.int32),
@@ -279,14 +321,14 @@ def _detect_ee_kernel(
         ee_block_count[s] = 0
         return
 
-    r = radius[vi]
+    r = wp.max(radius[vi], radius[vj])
     p0 = x0[vi]
     p1 = x0[vj]
     seg = p1 - p0
     elen = wp.length(seg)
     g = gravity[0]
-    dx_i = (v0[vi] + g * dt) * dt
-    dx_j = (v0[vj] + g * dt) * dt
+    dx_i = _predict_dx(v0[vi], inv_mass[vi], g, dt)
+    dx_j = _predict_dx(v0[vj], inv_mass[vj], g, dt)
     band = band_radii * r
     base = s * slots
 
@@ -297,50 +339,59 @@ def _detect_ee_kernel(
     query = wp.mesh_query_aabb(mesh, mid - ext, mid + ext)
     face = int(0)
     count = int(0)
+    full = int(0)
     while wp.mesh_query_next(query, face):
         for e in range(3):
-            if count >= slots:
-                wp.atomic_add(overflow, 0, 1)
-            else:
-                slot = base + count
-                ia = tri[3 * face + e]
-                ib = tri[3 * face + ((e + 1) % 3)]
-                ee_other[slot, 0] = ia
-                ee_other[slot, 1] = ib
-                ee_dir[slot] = wp.vec3(0.0, 0.0, 0.0)
-                ee_filtered[slot] = wp.uint8(1)
+            if full == 0:
+                if count >= slots:
+                    wp.atomic_add(overflow, 0, 1)
+                    full = 1
+                else:
+                    slot = base + count
+                    ia = tri[3 * face + e]
+                    ib = tri[3 * face + ((e + 1) % 3)]
+                    ee_other[slot, 0] = ia
+                    ee_other[slot, 1] = ib
+                    ee_dir[slot] = wp.vec3(0.0, 0.0, 0.0)
+                    ee_filtered[slot] = wp.uint8(1)
 
-                if ia != vi and ia != vj and ib != vi and ib != vj:
-                    # the shared edge of two faces is traversed in opposite order
-                    dup = int(0)
-                    for k in range(count):
-                        if ee_other[base + k, 0] == ib and ee_other[base + k, 1] == ia:
-                            dup = 1
-                    if dup == 0 and elen > _EPS:
-                        q0 = x0[ia]
-                        q1 = x0[ib]
-                        oseg = q1 - q0
-                        olen = wp.length(oseg)
-                        st = wp.closest_point_edge_edge(p0, p1, q0, q1, _EPS)
-                        sw = st[0]
-                        tw = st[1]
-                        near_end = (
-                            sw * elen < r
-                            or (1.0 - sw) * elen < r
-                            or tw * olen < r
-                            or (1.0 - tw) * olen < r
-                        )
-                        if not near_end:
-                            conn = (p0 + seg * sw) - (q0 + oseg * tw)
-                            dist = wp.length(conn)
-                            if dist > _EPS:
-                                dir = conn / dist
-                                dx_c1 = dx_i * (1.0 - sw) + dx_j * sw
-                                dx_c2 = (v0[ia] * (1.0 - tw) + v0[ib] * tw + g * dt) * dt
-                                if dist + wp.dot(dx_c1 - dx_c2, dir) < band:
-                                    ee_dir[slot] = dir
-                                    ee_filtered[slot] = wp.uint8(0)
-                count += 1
+                    if ia != vi and ia != vj and ib != vi and ib != vj:
+                        # the shared edge of two faces is traversed in opposite order
+                        dup = int(0)
+                        for k in range(count):
+                            if ee_other[base + k, 0] == ib and ee_other[base + k, 1] == ia:
+                                dup = 1
+                        if dup == 0 and elen > _EPS:
+                            q0 = x0[ia]
+                            q1 = x0[ib]
+                            oseg = q1 - q0
+                            st = _seg_seg(p0, p1, q0, q1)
+                            sw = st[0]
+                            tw = st[1]
+                            # §10.3: all four products use the query edge's length
+                            near_end = (
+                                sw * elen < r
+                                or (1.0 - sw) * elen < r
+                                or tw * elen < r
+                                or (1.0 - tw) * elen < r
+                            )
+                            if not near_end:
+                                conn = (q0 + oseg * tw) - (p0 + seg * sw)
+                                dist = wp.length(conn)
+                                if dist > _EPS:
+                                    dir = conn / dist
+                                    dx_q = dx_i * (1.0 - sw) + dx_j * sw
+                                    dx_o = _predict_dx(
+                                        v0[ia], inv_mass[ia], g, dt
+                                    ) * (1.0 - tw) + _predict_dx(
+                                        v0[ib], inv_mass[ib], g, dt
+                                    ) * tw
+                                    if dist - wp.dot(dx_q, dir) + wp.dot(dx_o, dir) < band:
+                                        ee_dir[slot] = dir
+                                        ee_filtered[slot] = wp.uint8(0)
+                    count += 1
+        if full == 1:
+            break
 
     ee_block_count[s] = count
 
@@ -367,9 +418,6 @@ def _solve_pt_kernel(
         return
 
     wi = inv_mass[p]
-    if wi == 0.0:
-        return
-
     face = pt_tri[slot]
     i0 = tri[3 * face + 0]
     i1 = tri[3 * face + 1]
@@ -391,16 +439,11 @@ def _solve_pt_kernel(
     if cval >= 0.0:
         return
 
-    denom = (
-        wi
-        + w[0] * w[0] * inv_mass[i0]
-        + w[1] * w[1] * inv_mass[i1]
-        + w[2] * w[2] * inv_mass[i2]
-    )
-    if denom <= 0.0:
+    # §10.2: the normal-variation gradients vanish, leaving particle and first vertex
+    denom = wi + inv_mass[i0]
+    if denom < _DENOM_EPS:
         return
 
-    # four-body denominator, but only the queried particle moves
     wp.atomic_add(delta, p, nrm * (-cval / denom * wi * relaxation))
 
 
@@ -434,10 +477,10 @@ def _solve_ee_kernel(
     p1 = x[vj]
     q0 = x[ia]
     q1 = x[ib]
-    st = wp.closest_point_edge_edge(p0, p1, q0, q1, _EPS)
+    st = _seg_seg(p0, p1, q0, q1)
     sw = st[0]
     tw = st[1]
-    conn = (p0 + (p1 - p0) * sw) - (q0 + (q1 - q0) * tw)
+    conn = (q0 + (q1 - q0) * tw) - (p0 + (p1 - p0) * sw)
     dist = wp.length(conn)
     if dist <= _EPS:
         return
@@ -445,7 +488,7 @@ def _solve_ee_kernel(
     if wp.dot(dir, ee_dir[slot]) < 0.0:
         dir = -dir
 
-    cval = wp.dot(conn, dir) - 2.0 * radius[vi]
+    cval = wp.dot(conn, dir) - 2.0 * wp.max(radius[vi], radius[vj])
     if cval >= 0.0:
         return
 
@@ -456,15 +499,13 @@ def _solve_ee_kernel(
     ga = 1.0 - tw
     gb = tw
     denom = gi * gi * wi + gj * gj * wj + ga * ga * inv_mass[ia] + gb * gb * inv_mass[ib]
-    if denom <= 0.0:
+    if denom < _DENOM_EPS:
         return
 
-    # four-body denominator, but only the query edge moves
+    # four-body denominator, but only the query edge moves, along -e
     dlambda = -cval / denom * relaxation
-    if wi > 0.0:
-        wp.atomic_add(delta, vi, dir * (dlambda * wi * gi))
-    if wj > 0.0:
-        wp.atomic_add(delta, vj, dir * (dlambda * wj * gj))
+    wp.atomic_add(delta, vi, dir * (-dlambda * wi * gi))
+    wp.atomic_add(delta, vj, dir * (-dlambda * wj * gj))
 
 
 class SelfContact:
@@ -513,6 +554,7 @@ class SelfContact:
                 ctx.v_frame0,
                 ctx.cloth_mesh.id,
                 ctx.cloth_tri_flat,
+                ctx.model.particle_inv_mass,
                 ctx.model.particle_radius,
                 ctx.model.gravity,
                 ctx.flag_pierced,
@@ -542,6 +584,7 @@ class SelfContact:
                 ctx.cloth_mesh.id,
                 ctx.cloth_tri_flat,
                 ctx.springs,
+                ctx.model.particle_inv_mass,
                 ctx.model.particle_radius,
                 ctx.model.gravity,
                 ctx.flag_pierced,
