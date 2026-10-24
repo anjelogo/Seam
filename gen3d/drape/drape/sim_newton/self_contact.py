@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from .builder import Ctx, SimParams
 
 _EPS = 1.0e-6
-_DET_EPS = 1.0e-12
 _DENOM_EPS = 1.0e-5
 _SEG_EPS = 1.0e-3
 
@@ -93,22 +92,61 @@ def _predict_dx(v: wp.vec3, w: float, g: wp.vec3, dt: float):
 
 @wp.func
 def _ray_tri_t(orig: wp.vec3, dir: wp.vec3, a: wp.vec3, b: wp.vec3, c: wp.vec3):
-    e1 = b - a
-    e2 = c - a
-    pv = wp.cross(dir, e2)
-    det = wp.dot(e1, pv)
-    if wp.abs(det) < _DET_EPS:
+    # port of intersect_ray_tri_woop, warp 1.18 native/intersect.h, Apache-2.0
+    kz = int(0)
+    lmax = wp.abs(dir[0])
+    if wp.abs(dir[1]) > lmax:
+        kz = 1
+        lmax = wp.abs(dir[1])
+    if wp.abs(dir[2]) > lmax:
+        kz = 2
+
+    k1 = kz + 1
+    if k1 == 3:
+        k1 = 0
+    k2 = k1 + 1
+    if k2 == 3:
+        k2 = 0
+    kx = k1
+    ky = k2
+    if dir[kz] < 0.0:
+        kx = k2
+        ky = k1
+
+    sx = dir[kx] / dir[kz]
+    sy = dir[ky] / dir[kz]
+    sz = 1.0 / dir[kz]
+
+    va = a - orig
+    vb = b - orig
+    vc = c - orig
+
+    # no FMA in warp Python, so the edge functions always take its float64 fallback
+    ax = wp.float64(va[kx] - sx * va[kz])
+    ay = wp.float64(va[ky] - sy * va[kz])
+    bx = wp.float64(vb[kx] - sx * vb[kz])
+    by = wp.float64(vb[ky] - sy * vb[kz])
+    cx = wp.float64(vc[kx] - sx * vc[kz])
+    cy = wp.float64(vc[ky] - sy * vc[kz])
+
+    u = wp.float32(cx * by - cy * bx)
+    v = wp.float32(ax * cy - ay * cx)
+    w = wp.float32(bx * ay - by * ax)
+
+    if (u < 0.0 or v < 0.0 or w < 0.0) and (u > 0.0 or v > 0.0 or w > 0.0):
         return -1.0
-    inv = 1.0 / det
-    tv = orig - a
-    u = wp.dot(tv, pv) * inv
-    if u < 0.0 or u > 1.0:
+
+    det = u + v + w
+    if det == 0.0:
         return -1.0
-    qv = wp.cross(tv, e1)
-    vb = wp.dot(dir, qv) * inv
-    if vb < 0.0 or u + vb > 1.0:
+
+    tnum = u * (sz * va[kz]) + v * (sz * vb[kz]) + w * (sz * vc[kz])
+    # the sign-bit xor of the original, which lets a zero distance through
+    if det > 0.0 and tnum < 0.0:
         return -1.0
-    return wp.dot(e2, qv) * inv
+    if det < 0.0 and tnum > 0.0:
+        return -1.0
+    return tnum / det
 
 
 @wp.func
