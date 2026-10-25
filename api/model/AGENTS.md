@@ -18,6 +18,7 @@ The docs in this folder are the project's memory. If something isn't written her
 - **Every training or eval run gets a run id** (`YYYYMMDD-short-name`) and an entry in the STATUS.md run table: data snapshot, config, key metrics, where the weights are.
 - **Decisions get a line in STATUS.md › Decisions** with the date and the reason. Reversing one needs a new line, not an edit.
 - **Before ending a session**, make sure STATUS.md › Next is accurate, so the next agent knows exactly what to do first.
+- **After every docs update, give Caden the commit message to use**, following the root commit format (`type(scope): short lowercase desc`, ≤50 chars, subject only, no attribution). For example `docs(model): log h1 baseline`. Caden commits; agents don't.
 - Keep entries short. Link to files, commits and run ids rather than pasting output.
 
 ## LOG.md entry format

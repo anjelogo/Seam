@@ -11,7 +11,10 @@ Paste this:
 > Read api/model/AGENTS.md and follow it. Then summarise STATUS.md and the latest LOG.md entries, and tell me what you'd do next.
 
 ## Setup
-- Postgres access: `DATABASE_URL` (default `postgresql://seam:seam@localhost:5432/seam`, see shared/seam_shared/db.py). Run against a copy of the prod DB, not the live one.
+- **Prod DB (not verified yet, waiting on Anjelo):** it runs in Docker on Anjelo's server and listens on 127.0.0.1:5432 only (compose.yaml), so connect over Tailscale + SSH. Use a read-only role if Anjelo makes one.
+  - Run one query on the server: `ssh <user>@<server> 'cd <repo> && docker compose exec -T postgres psql -U seam seam' < query.sql`
+  - Or tunnel, for local tools: `ssh -N -L 5433:127.0.0.1:5432 <user>@<server>`, then `psql postgresql://seam:<password>@localhost:5433/seam`. Use 5433 because local 5432 is taken by another project.
+- Old local snapshot: `data/seam.db` (SQLite, 2026-10-18, 1,107 tagged items, before Depop and the `leather` query). Queries for it are in `queries/`.
 - Training box: Caden's PC (RTX 3080 Ti, 12 GB) under WSL2 (RESEARCH.md §7).
 - Data and weights go in `data/models/` (gitignored).
 
