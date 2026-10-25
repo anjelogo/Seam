@@ -1,0 +1,33 @@
+Files upstream-warp/.gitattributes and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/.gitattributes differ
+Only in upstream-warp: .github
+Files upstream-warp/README.md and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/README.md differ
+File upstream-warp/exts/omni.warp.core/warp is a directory while file /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/exts/omni.warp.core/warp is a regular file
+Files upstream-warp/warp/builtins.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/builtins.py differ
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp: collision
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/fem/field: discrete_field.py
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/fem/space: nodal_function_space.py
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native/clang: clang.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: crt.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: cuda_util.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: cutlass_gemm.cpp.o
+Files upstream-warp/warp/native/exports.h and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native/exports.h differ
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: hashgrid.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: marching.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: mesh.cpp.o
+Files upstream-warp/warp/native/mesh.h and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native/mesh.h differ
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: reduce.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: runlength_encode.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: sort.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: sparse.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: volume.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: warp.cpp.o
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/native: warp.cu.o
+Files upstream-warp/warp/sim/collide.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/collide.py differ
+Files upstream-warp/warp/sim/integrator_euler.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/integrator_euler.py differ
+Files upstream-warp/warp/sim/integrator_xpbd.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/integrator_xpbd.py differ
+Files upstream-warp/warp/sim/model.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/model.py differ
+Files upstream-warp/warp/sim/particles.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/particles.py differ
+Files upstream-warp/warp/sim/utils.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/sim/utils.py differ
+Files upstream-warp/warp/stubs.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/stubs.py differ
+Files upstream-warp/warp/tests/test_mesh_query_point.py and /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/tests/test_mesh_query_point.py differ
+Only in /workspace/seam/gen3d/drape/vendor/NvidiaWarp-GarmentCode/warp/tests: test_misc.py

@@ -9,6 +9,41 @@ Format:
 
 ---
 
+## 2026-10-23 19:40 · anjelo · gen3d drape tee neck
+- branch anjelo/tee-neck (on tee-fix): tees/longsleeves now draft at the size chart's body length ±3 cm (drape/size_body.py, model-free `--reclamp`, re-clamped per `--size`; the black tee was 17.9 cm short); contact-sheet white specks fixed in drape/sheet.py (the GLBs were clean); crew necks pinned to CircleNeckHalf in the prompt and `--reclamp`
+- crew-neck V traced to the straight rib-band halves meeting at centre front as chords; an arc-cut band reads round in blind review but fails the frozen neck_ring/neck_drop gates, so the straight band still ships (arc band at 34396c5, numbers in gen3d/drape/RESULTS_TEE_FIX.md "Neckline round")
+- mannequin and asset GLBs unchanged on this branch; merge checklist for the whole drape chain in gen3d/drape/MERGE.md
+- action needed: none (gen3d drape only; nothing wired into prod)
+
+## 2026-10-23 17:30 · anjelo · gen3d drape tee fix
+- tee-slide root cause found and fixed (branch anjelo/tee-fix): drape/body.py measured 6 GarmentCode body keys from the arm-cap apex instead of the nape (head_l −4.87 cm ⇒ every top drafted/placed ~4.9 cm below the shoulders); bodies + patterns re-cut, shoulder cap coverage now 100/100 both poses on all 8 tops + XS/M/XL under new un-gameable gates (drape.coverage + drape.sheet contact sheets; old drape.collar kept for reference — it was the metric that lied)
+- tee-collar's v9a defaults REVERTED (no neckband injection, no ring-hold/stiffness category defaults); rib neckband is now a per-item pattern feature (listing-photo-verified, stored params) cut at 0.85× the neckline (stretch-on, Turtle-scoped patch in drape/pattern.py); the neckline prior now cuts its declared depth (params.py includes GC's shoulder-slope f_depth_adj)
+- mannequin geometry UNCHANGED on this branch (no GLB re-export; the rebake note from the tee-collar entry still stands as-is)
+- open, documented in gen3d/drape/RESULTS_TEE_FIX.md + REVIEW_TEE.md: crew necklines still read as a shallow V in blind review (GC's fc_depth≥0.3 floor + band cinch at centre front); oversized-cut armhole gate misses; XS penetration 0.159%
+- action needed: none (gen3d drape only; nothing wired into prod)
+
+## 2026-10-23 13:00 · anjelo · gen3d mannequin + tee collar drape
+- mannequin arm/trunk shoulder notch fixed (trunk shoulder row now meets the arm cap at every shoulders slider and pose; v3 widths/slopes, morph target names and anchors unchanged) — avatar + template GLBs and drape bodies re-exported AGAIN, so item textures still need the rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when this branch lands
+- tee drape defaults changed (branch anjelo/tee-collar): collarless tops (tee, longsleeve) get a 2.5 cm rib neckband from the params prior plus a vertical neckline hold + ×4 neck stiffness in the sim, keyed by category — tees now sit on the shoulder points (were 5–12 cm low); hoodies/collared shirts untouched; numbers in gen3d/drape/RESULTS_TEE_COLLAR.md and COLLAR_GRID.md
+- action needed: none (gen3d drape only; nothing wired into prod)
+
+## 2026-10-21 17:05 · anjelo · gen3d mannequin + drape texture v3
+- mannequin shoulders widened/flattened to GarmentCode's mean (masc 36.5 cm @ 22.0°, fem scaled by the same ratio; assets/avatar_*.glb, template GLBs and anchors.json re-exported, morph target names unchanged) — the web avatar GLB is new and item textures need a rebake onto the new templates (`cd gen3d && uv run python -m app.bake --ready`) when branch anjelo/texture-v3 lands
+- drape texture v3 (same branch): neckline depth prior (params --reclamp), seam-true tint/back-seed, LSQ stripe phase + collar/hood frames, sub-bands/line-trims/leg-logo spec fields, underarm smear fix, retuned twill/jersey normals, honest verify gates, 3-pass eval — 12-item judge v3 1.50 vs v2 1.34 vs legacy 1.01, details in gen3d/drape/RESULTS_TEXTURE_V3.md
+- sim license: the warp fork is NVIDIA Source Code License non-commercial only; no drop-in permissive swap — ~3.3k-line feature port, target Newton 1.7.0 (Apache-2.0); pattern generation already MIT-clean (gen3d/drape/LICENSE_SPIKE.md)
+- action needed: none (gen3d drape only; nothing wired into prod)
+
+## 2026-10-21 00:25 · anjelo · gen3d drape texture v2
+- gen3d/drape now textures in sewing-pattern space (branch anjelo/texture-v2): listing photos -> PatternSpec via Claude (drape/spec.py) -> delit albedo -> per-panel cm rasters (stripes on grain, side stripes on the outseam, registered prints) -> UV atlas -> GLB; the old front projection stays behind `--legacy`
+- PatternSpec/StripeSet/Trim/Placement are a local copy in gen3d/drape/drape/patternspec.py; switch the import to shared/schema once garments-v3 merges
+- bottoms hold the waist for the whole sim, tops drape in a 45° A-pose and bind back to the 20° web pose (tees still ride ~6 cm low: mannequin shoulders); eval set via `python -m drape.inputs --set texture`, scores + screenshots in gen3d/drape/RESULTS_TEXTURE.md
+- action needed: none (gen3d drape only, nothing wired into prod)
+
+## 2026-10-20 21:05 · anjelo · gen3d drape poc
+- sewing-pattern + cloth-sim PoC lives in gen3d/drape (own uv package; nothing wired into prod): 4 real prod items -> Claude design params -> pygarment patterns on size bodies -> our mannequin exported as a GarmentCode body; panel texturing, morph-bound GLBs (web useBodyMorphs-compatible) and a side-by-side viewer all run locally
+- the warp cloth sim itself needs a CUDA box: drape/scripts/setup_gpu.sh + run_poc.sh are ready, local CPU sim segfaults (documented); numbers, screenshots, license flag (warp fork is non-commercial) and verdict in gen3d/drape/RESULTS.md
+- action needed: none (PoC only)
+
 ## 2026-10-19 13:50 · anjelo · api depop volume
 - depop searches run twice (gender=female, gender=male; unfiltered returns the same 24 as female) and the worker keeps all 48 per (query, slot), vs 12 for the other sources
 - SCRAPE_QUERIES default adds denim, leather, 90s, carhartt (10 queries): ~2,900 raw listings a night across sources, more than the ~1,400/day one cv job can tag, so the untagged backlog grows

@@ -1,0 +1,8 @@
+{
+  "output": "runs/out",
+  "datasets_path": "runs/datasets",
+  "datasets_sim": "runs/datasets_sim",
+  "sim_configs_path": "vendor/GarmentCode/assets/Sim_props",
+  "bodies_default_path": "runs/bodies",
+  "body_samples_path": "runs/bodies"
+}

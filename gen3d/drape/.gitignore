@@ -1,0 +1,8 @@
+.venv/
+vendor/
+runs/*
+!runs/out
+runs/out/*
+!runs/out/shots
+__pycache__/
+*.pyc
