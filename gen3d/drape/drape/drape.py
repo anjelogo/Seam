@@ -465,7 +465,8 @@ def main() -> None:
     ap.add_argument("--bodies", type=Path, default=DRAPE / "runs/bodies")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--wearer", default="wearer_masc")
-    ap.add_argument("--engine", choices=("newton", "fork"), default="fork", help="cloth engine (default: fork)")
+    ap.add_argument("--engine", choices=("newton", "fork"), default="newton",
+                    help="cloth engine (default: newton; fork is research-only, see drape/scripts/setup_fork.sh)")
     ap.add_argument("--base", default="masc", choices=("masc", "fem"), help="mannequin base of --wearer, for posing it")
     ap.add_argument("--only")
     ap.add_argument("--size")

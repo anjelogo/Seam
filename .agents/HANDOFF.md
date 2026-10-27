@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-27 16:30 · anjelo · gen3d drape newton
+- drape engine is now Newton 1.7.0 on PyPI warp-lang 1.18.0 (both Apache-2.0): `--engine newton` is the default and `drape/scripts/setup_gpu.sh` installs them from PyPI, with no fork clone and no source build
+- the NVIDIA-licensed warp fork is opt-in and research only: `bash drape/scripts/setup_fork.sh` builds `.venv-fork`, then `UV_PROJECT_ENVIRONMENT=.venv-fork uv run --no-sync python -m drape.drape --engine fork …`
+- parity vs the fork: 17/19 rows on the fixed targets, blind review 19/19 equivalent; numbers, the two misses and re-run steps in gen3d/drape/RESULTS_NEWTON.md, clean-room record in gen3d/drape/CLEANROOM.md
+- action needed: none (gen3d drape only; nothing wired into prod)
+
 ## 2026-10-23 19:40 · anjelo · gen3d drape tee neck
 - branch anjelo/tee-neck (on tee-fix): tees/longsleeves now draft at the size chart's body length ±3 cm (drape/size_body.py, model-free `--reclamp`, re-clamped per `--size`; the black tee was 17.9 cm short); contact-sheet white specks fixed in drape/sheet.py (the GLBs were clean); crew necks pinned to CircleNeckHalf in the prompt and `--reclamp`
 - crew-neck V traced to the straight rib-band halves meeting at centre front as chords; an arc-cut band reads round in blind review but fails the frozen neck_ring/neck_drop gates, so the straight band still ships (arc band at 34396c5, numbers in gen3d/drape/RESULTS_TEE_FIX.md "Neckline round")

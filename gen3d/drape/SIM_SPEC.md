@@ -2629,3 +2629,40 @@ Fork files opened for §10 (reader S1c, the commit in §0): `warp/sim/collide.py
 `meshgen/sim_config.py`, `meshgen/datasim_utils.py`. Two earlier reader sessions on the same
 questions (S1b) stalled on infrastructure timeouts and wrote nothing. No fork code appears in
 this section.
+
+### 10.14 Self-contact exactness, settled during parity
+
+Written by the lead from three audited reader notes (S1d, S1e, S1f), after black-box parity runs
+raised questions that §4.7 and §10.1–§10.3 did not settle. Where this differs from §10.2's
+reasoning, this wins; the observable rules of §10.2 stand.
+
+- **The piercing survey's triangle test is Woop, Benthin, Wald, Johnson and Ernst, "Watertight
+  Ray/Triangle Intersection" (JCGT 2013)**, the same test upstream warp's ray query uses. A
+  segment crossing exactly through a triangle edge or vertex **counts** (an exact zero edge
+  function is inside); a segment lying in the triangle's plane **never** counts (the projected
+  triangle has zero area, which is an explicit reject); a hit at distance zero counts, a hit at
+  exactly the segment length does not; there is no epsilon in the triangle test. The only
+  tolerance is a one-thousandth expansion of each hierarchy node's box during traversal.
+  Stitched panel boundaries line up exactly in the flat layout, so exact-edge crossings are
+  common at frame 0 and a non-watertight test mis-marks them.
+- **Point–triangle detection has no feature rule and no coplanarity rule.** A pair whose closest
+  point is clamped to an edge or vertex is kept exactly like an interior one, and a particle
+  lying in the plane of a non-incident triangle of its own panel is tested like any other. The
+  edge–edge stand-down near endpoints (§10.3) is the only division of labour between the two.
+- **Sidedness is strict:** the flag is set only when the unit normal dotted with (particle −
+  first vertex) is strictly negative; exactly zero leaves the normal unflipped.
+- **A particle coinciding with its closest point** has a zero-length direction, which the
+  reference normalises to the zero vector; the predicted gap is then zero and the pair is kept.
+- **The two-body denominator of §10.2 holds for every pair, clamped or not.** The normal-variation
+  terms are contracted with the unit normal itself, which the tangential projector removes, so
+  they are zero unconditionally — not only when the separation is parallel to the normal. The
+  constraint is the face normal dotted with (particle − closest point), minus two radii, and the
+  push is along the face normal, also for clamped pairs; the denominator guard is an absolute
+  1e-5 and only the particle moves.
+- **Survey marks gate everything:** a marked particle gets no point–triangle pairs and no
+  edge–edge pair that touches it, for that frame. The marks and filter flags are cleared before
+  detection; the pair entries themselves are not, and are masked by the count and the filter.
+
+Fork files opened by S1d–S1f: `warp/sim/collide.py`, `warp/sim/integrator_xpbd.py`,
+`warp/sim/model.py`, `warp/native/mesh.h`, `warp/native/intersect.h`. No fork code appears in
+this section.

@@ -51,11 +51,12 @@ drape/_repo.py resolves gen3d/../shared and ../assets relative to itself.)
 ```sh
 ssh root@IP -p PORT -i ~/.ssh/id_ed25519
 cd /workspace/seam/gen3d/drape
-bash drape/scripts/setup_gpu.sh    # apt deps + git-lfs BEFORE clones + uv sync + warp CUDA build + upstream smoke (prints seconds)
+bash drape/scripts/setup_gpu.sh    # apt deps + GarmentCode clone + uv sync --extra newton (newton + PyPI warp, no source build) + newton smoke
+# research-only fork comparisons: bash drape/scripts/setup_fork.sh builds .venv-fork; never part of the default install
 bash drape/scripts/run_poc.sh      # all 4 items + XS/M/XL size experiment + tee->hoodie layer test + texture/export/bind on real sim objs
 ```
 
-Expected wall time: setup ~10-15 min, run ~5-15 min GPU. Both scripts are idempotent and die
+Expected wall time: setup ~2-5 min (the fork's ~10 min CUDA build is gone), run ~5-15 min GPU. Both scripts are idempotent and die
 loudly naming the failed step. If a sim fails, `pod-doctor` journey + runs/out/timings.json
 fails field. For the binding-vs-redrape number:
 
