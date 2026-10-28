@@ -4,6 +4,12 @@ Newest first. One entry per working session. Format and rules in AGENTS.md.
 
 ---
 
+## 2026-10-28 · agent · admin export for prod data
+- did: built /admin (web) + GET /admin/stats and GET /admin/export/items (api). Admins = ADMIN_EMAILS allowlist; others get 404. The export streams a fixed column list from `items` only, rate-limited (10 / 15 min) and logged. Design mockup: https://claude.ai/artifact/7GqXG6XbujnFV8Qtjgggf7
+- result: anonymous requests 401 (checked locally); the admin path and the export itself are untested, no local Postgres
+- files: api/app/routes/admin.py, api/app/auth/deps.py, web/src/routes/Admin.tsx, .agents/HANDOFF.md
+- next: Anjelo deploys and sets ADMIN_EMAILS; export, snapshot to data/models/snapshots/, rerun H1 on it
+
 ## 2026-10-25 · agent · prod DB access
 - did: worked out how to reach the prod DB. It's on Anjelo's server in Docker, bound to 127.0.0.1:5432 (compose.yaml:36). The Cloudflare tunnel only exposes web:80. There's no documentation of how the data got there (HANDOFF 10-18 says "nothing migrated"; Caden's Tailscale migration was abandoned as too slow)
 - result: access has to go through Tailscale + SSH. Tailscale is installed on Caden's Mac but stopped. Asked Anjelo for the server name, SSH user, repo path, DB password or read-only role, and to add Caden's SSH key. **Blocked until he replies**

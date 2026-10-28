@@ -1,13 +1,12 @@
 # Custom model status
 
-Last updated: 2026-10-25 · Phase: **0 (measure)** · Branch: `caden/custom-model-research`
+Last updated: 2026-10-28 · Phase: **0 (measure)** · Branch: `caden/custom-model-research`
 
 Goal: a Seam-owned model that (1) fixes the leather bias and (2) tags more accurately than the hosted models, starting with tagging (RESEARCH.md §8).
 
 ## In progress
 - **H1 on prod.** Done on the 10-18 snapshot (11.7% leather overall, 3.0% outerwear; LOG 2026-10-25). Prod needs rerunning to see what the `leather` query (added 10-19) did.
-  - **Blocked: waiting on Anjelo (asked 2026-10-25).** The prod DB is on his server, bound to 127.0.0.1:5432, so the only way in is Tailscale + SSH. We've asked him for: the server's Tailscale name, the SSH user, the repo path, POSTGRES_PASSWORD (or better, a read-only role), and to add Caden's `~/.ssh/id_ed25519.pub`. The plan for once access exists is in README.md › Setup.
-  - Caden's side: Tailscale is installed but stopped. Run `tailscale up` and sign in with the account Anjelo invited.
+  - **Unblock path: admin export (2026-10-28).** Anjelo says the DB is only reachable inside the Docker network, so instead of SSH there's now `/admin` with an items-table JSONL export (HANDOFF 2026-10-28). Waiting on Anjelo to deploy it and set `ADMIN_EMAILS`. Save each export as `data/models/snapshots/<date>/items.jsonl`.
 
 ## Next (top = do first)
 1. **Draft a material vocabulary (doesn't need prod, so do this while blocked).** A fixed list such as leather / faux_leather / suede / canvas / knit…, mapped from today's free-text `tags.material`. Start from the snapshot's values (`data/seam.db`), then check it against prod. Needed for gold labels and probes.
@@ -25,11 +24,12 @@ Goal: a Seam-owned model that (1) fixes the leather bias and (2) tags more accur
 ## Decisions
 - 2026-10-25 · Model work lives in `api/model/`; data and weights in `data/models/` (gitignored). Reason: Caden owns /api, and weights stay out of git.
 - 2026-10-25 · Measure before training. Reason: the bias might come from the scraping or the retrieval, and no model fixes that (RESEARCH.md §2).
+- 2026-10-28 · Prod data comes through the /admin export, not an SSH tunnel. Reason: Anjelo prefers not to open DB access; the export is items-only, admin-allowlisted and rate-limited.
 - 2026-10-25 · The goal covers accuracy overall, not only leather. Reason: Caden wants Seam to run on its own, more accurate model.
 - 2026-10-25 · Matching "leather" in listing text isn't used as a weak label. Reason: most matches were hashtags or boilerplate (LOG 2026-10-25).
 
 ## Open questions
-- Prod DB access: waiting on Anjelo (see In progress). Also, how did the data get onto his server? It isn't documented anywhere (the 10-18 HANDOFF says "nothing migrated"; the Tailscale copy was abandoned).
+- Prod data: waiting on the /admin deploy (see In progress). Also, how did the data get onto his server? It isn't documented anywhere (the 10-18 HANDOFF says "nothing migrated"; the Tailscale copy was abandoned).
 - Which screen showed the leather bias: tags, inventory or outfits?
 - Can we train on Depop data given its ToS?
 - Does Anjelo agree an eval script isn't an automated test?
