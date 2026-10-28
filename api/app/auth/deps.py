@@ -1,3 +1,4 @@
+import os
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, Response
@@ -29,4 +30,15 @@ def optional_user(request: Request, response: Response) -> User | None:
 def current_user(user: User | None = Depends(optional_user)) -> User:
     if user is None:
         raise HTTPException(401, "log in first.")
+    return user
+
+
+def admins() -> set[str]:
+    return {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+
+def admin_user(user: User = Depends(current_user)) -> User:
+    # 404, not 403: non-admins can't tell the admin routes exist
+    if user.email.lower() not in admins():
+        raise HTTPException(404, "not found.")
     return user

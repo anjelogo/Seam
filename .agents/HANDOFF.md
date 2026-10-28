@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-28 12:30 · caden · api + web admin
+- new env var ADMIN_EMAILS (comma list, empty = nobody): those logged-in users can open /admin; everyone else gets 404 from /admin/* (anon 401)
+- GET /admin/stats {items,tagged,active}; GET /admin/export/items streams the items table as JSONL (fixed column list, never user/session/look tables), 10 per 15 min per admin, logged to stdout
+- web route /admin: stats + one export button; images are not in the export, they're already at /static/clean/...
+- action needed (anjelo): set ADMIN_EMAILS on the server (caden's email) and restart api
+
 ## 2026-10-27 16:30 · anjelo · gen3d drape newton
 - drape engine is now Newton 1.7.0 on PyPI warp-lang 1.18.0 (both Apache-2.0): `--engine newton` is the default and `drape/scripts/setup_gpu.sh` installs them from PyPI, with no fork clone and no source build
 - the NVIDIA-licensed warp fork is opt-in and research only: `bash drape/scripts/setup_fork.sh` builds `.venv-fork`, then `UV_PROJECT_ENVIRONMENT=.venv-fork uv run --no-sync python -m drape.drape --engine fork …`
