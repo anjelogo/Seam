@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 eval = ["lpips", "torch", "torchvision", "playwright"]
+newton = ["newton==1.7.0"]
 
 # PyPI pygarment 2.0.2 wheel is mispackaged; clone vendor/ before uv sync
 [tool.uv.sources]
