@@ -55,7 +55,19 @@ export const getLooks = () => request<(Look & { id: string })[]>("/api/me/looks"
 
 export const postLook = (look: Look) => post<Look & { id: string }>("/api/me/looks", look);
 
-export const postOutfits = (query: StyleQuery) => post<OutfitResponse>("/api/outfits", query);
+export const getAdminStats = () => request<{ items: number; tagged: number; active: number }>("/api/admin/stats");
+
+export async function exportItems(): Promise<{ blob: Blob; name: string }> {
+  const res = await fetch("/api/admin/export/items");
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ApiError | null;
+    throw { error: res.statusText, ...body, status: res.status } as RequestError;
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "items.jsonl";
+  return { blob: await res.blob(), name };
+}
+
+export const postOutfits =(query: StyleQuery) => post<OutfitResponse>("/api/outfits", query);
 
 export function getItems(
   params: { slot?: Slot; category?: Category; q?: string; max_cents?: number; limit?: number; offset?: number } = {},

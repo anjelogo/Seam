@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { RequireAuth } from "./components/RequireAuth";
+import Admin from "./routes/Admin";
 import Avatar from "./routes/Avatar";
 import Layout from "./routes/Layout";
 import LogIn from "./routes/LogIn";
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="login" element={<LogIn />} />
           <Route path="onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
           <Route path="avatar" element={<RequireAuth><Avatar /></RequireAuth>} />
+          <Route path="admin" element={<RequireAuth><Admin /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
