@@ -465,8 +465,10 @@ def main() -> None:
     ap.add_argument("--bodies", type=Path, default=DRAPE / "runs/bodies")
     ap.add_argument("--out", type=Path, default=DRAPE / "runs/out")
     ap.add_argument("--wearer", default="wearer_masc")
-    ap.add_argument("--engine", choices=("newton", "fork"), default="newton",
-                    help="cloth engine (default: newton; fork is research-only, see drape/scripts/setup_fork.sh)")
+    ap.add_argument("--engine", choices=("newton", "fork", "taichi"), default="newton",
+                    help="cloth engine (default: newton; fork is research-only, see drape/scripts/setup_fork.sh; "
+                         "taichi runs a --scene on vulkan/metal/cuda/cpu)")
+    ap.add_argument("--arch", choices=("vulkan", "metal", "cuda", "cpu"), default="vulkan", help="taichi backend")
     ap.add_argument("--base", default="masc", choices=("masc", "fem"), help="mannequin base of --wearer, for posing it")
     ap.add_argument("--only")
     ap.add_argument("--size")
@@ -490,11 +492,28 @@ def main() -> None:
     ap.add_argument("--material")
     ap.add_argument("--spec", type=Path, help="direct mode: folder containing <name>_specification.json")
     ap.add_argument("--name", help="direct mode: spec name")
+    ap.add_argument("--scene", type=Path, help="run the newton sim from a portable <name>_scene.npz instead of a spec")
     ap.add_argument("--experiment", choices=["sizes", "layers"])
     args = ap.parse_args()
 
     NECK.update(hold=args.neck_hold or "none", stiff=args.neck_stiff, dump=args.dump_every)
     ENGINE["name"] = args.engine
+    if args.engine == "taichi" and not args.scene:
+        raise SystemExit("--engine taichi needs --scene (export one with python -m drape.scene export)")
+    if args.scene:
+        args.out.mkdir(parents=True, exist_ok=True)
+        if args.engine == "taichi":
+            from drape.sim_taichi.run import run_scene as run_taichi
+
+            run_taichi(args.scene, args.arch, args.out, args.dump_every, args.out.parent.parent / "timings.json",
+                       args.max_steps)
+            return
+        if args.engine != "newton":
+            raise SystemExit("--scene works with --engine newton or taichi")
+        from drape.sim_newton.scene_loader import run_scene
+
+        run_scene(args.scene, args.out, max_steps=args.max_steps, dump_every=args.dump_every)
+        return
     props_kw = dict(res=args.res, max_steps=args.max_steps, attachment=not args.no_attachment,
                     frame_timeout=args.frame_timeout, body_friction=args.body_friction,
                     preset=args.preset, release_frame=args.release_frame)
