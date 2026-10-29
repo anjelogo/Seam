@@ -4,6 +4,18 @@ Newest first. One entry per working session. Format and rules in AGENTS.md.
 
 ---
 
+## 2026-10-28 · caden · gold labelling session
+- did: labelled 105/300 gold v1 items in `data/models/gold/v1/label.html`; added colors silver, gold and material lace mid-session (sample unchanged, md5 fc62a919)
+- result: labelling rules agreed. Material = what the main body visibly is (lace only if most of the item; trim doesn't count). Shoes usable = whole shoe/pair, alone, any angle (a pair is one item); no if only sole/tag/detail/cropped/several pairs. Halter and tube tops → `tank`; cropped tops go by sleeve (tee/longsleeve/tank), cropped is a fit, not a category
+- open: which shoe angles gen3d's shoe template bakes well (ask Anjelo); halter/tube tops have no strapless template
+- next: finish labelling (195 left), download labels.jsonl, run score.py
+
+## 2026-10-28 · agent · material vocab v1 + gold v1 sample
+- did: material vocab v1 (`api/model/material.py`): 24 classes + other/unknown (lace added mid-labelling), regex rules, first match wins, primary material = first part of "a/b". Sampled gold v1 (`api/model/gold.py`, seed 20261028) and built a local labelling page; wrote `api/model/score.py` for the baseline
+- result: vocab maps the 10-28 export's ~330 strings with 9 of 8,656 tagged items left as `other` (wood, metal, quilted fabric…); 1,354 `unknown` (1,283 have no material). Gold v1 = 300 items: 60 shoes tagged leather with no text match, 40 non-shoe leather-tagged, 200 by slot (top/bottom/outer 50, shoes 40, onepiece/accessory 5). The page hides the tagger's labels so they don't anchor the labeller. Colors: 14 basic + silver and gold (added mid-labelling, no labels changed). score.py checked on 20 fake labels only
+- files: api/model/material.py, gold.py, gold_label.html, score.py; data/models/gold/v1/{sample.jsonl,label.html} (gitignored)
+- next: Caden labels gold v1, then run score.py for the baseline
+
 ## 2026-10-28 · agent · H1 on the prod export
 - did: Caden exported prod via /admin to `data/models/snapshots/items-2026-10-28.jsonl` (9,122 rows: depop 6,222, poshmark 1,738, grailed 1,162; 8,656 tagged). Ran H1 on all tagged rows with `api/model/queries/h1_jsonl.py`
 - result (prod health): **all 9,122 rows are `status = gone`**. last_seen stops at 2026-10-24, so scraping stopped then and expire_stale (72 h) expired everything. H1 counts every status for that reason

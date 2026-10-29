@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Gold labels</title>
+<style>
+  body { font: 14px system-ui; margin: 16px; background: #fff; color: #111; }
+  .imgs img { height: 260px; margin: 0 6px 6px 0; border: 1px solid #ccc; }
+  fieldset { border: 1px solid #ccc; margin: 8px 0; }
+  label { display: inline-block; margin: 2px 10px 2px 0; }
+  pre { white-space: pre-wrap; max-height: 140px; overflow: auto; background: #f4f4f4; padding: 6px; }
+  .done { color: green; }
+</style>
+<p>Prod host <input id="host" placeholder="https://..." size="40"> · <span id="pos"></span> ·
+  <button id="prev">← prev</button> <button id="next">next →</button> <button id="skip">next unlabelled</button> ·
+  <button id="dl">download labels.jsonl</button></p>
+<h3 id="title"></h3>
+<p><a id="link" target="_blank">listing</a></p>
+<div class="imgs" id="imgs"></div>
+<pre id="desc"></pre>
+<form id="form"></form>
+<script>
+const ITEMS = /*ITEMS*/[], MATERIALS = /*MATERIALS*/[], CATEGORIES = /*CATEGORIES*/[], COLORS = /*COLORS*/[];
+const FIELDS = { material: MATERIALS, category: CATEGORIES, color: COLORS, usable_for_3d: ["yes", "no"] };
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} };
+const labels = load("gold_v1", {});
+const host = document.getElementById("host");
+host.value = load("gold_v1_host", "");
+host.onchange = () => { save("gold_v1_host", host.value.replace(/\/$/, "")); show() };
+let i = Math.max(0, ITEMS.findIndex(it => !complete(labels[it.id])));
+
+function complete(l) { return l && Object.keys(FIELDS).every(f => l[f]) }
+
+function show() {
+  const it = ITEMS[i], l = labels[it.id] || {};
+  const done = ITEMS.filter(x => complete(labels[x.id])).length;
+  document.getElementById("pos").textContent = `${i + 1} / ${ITEMS.length} · ${done} done`;
+  document.getElementById("title").textContent = it.title || "(no title)";
+  document.getElementById("title").className = complete(l) ? "done" : "";
+  document.getElementById("link").href = it.url;
+  document.getElementById("desc").textContent = it.desc || "";
+  document.getElementById("imgs").innerHTML = it.images.map(u => `<img alt="" src="${host.value}${u}">`).join("");
+  document.getElementById("form").innerHTML = Object.entries(FIELDS).map(([f, opts]) =>
+    `<fieldset><legend>${f}</legend>${opts.map(o =>
+      `<label><input type="radio" name="${f}" value="${o}" ${l[f] === o ? "checked" : ""}> ${o}</label>`).join("")}</fieldset>`).join("");
+}
+
+document.getElementById("form").onchange = e => {
+  const id = ITEMS[i].id;
+  labels[id] = { ...labels[id], [e.target.name]: e.target.value };
+  save("gold_v1", labels);
+  show();
+};
+const go = d => { i = Math.min(ITEMS.length - 1, Math.max(0, i + d)); show() };
+document.getElementById("prev").onclick = () => go(-1);
+document.getElementById("next").onclick = () => go(1);
+document.getElementById("skip").onclick = () => { const j = ITEMS.findIndex(it => !complete(labels[it.id])); if (j >= 0) { i = j; show() } };
+document.getElementById("dl").onclick = () => {
+  const body = ITEMS.filter(it => labels[it.id]).map(it => JSON.stringify({ id: it.id, ...labels[it.id] })).join("\n") + "\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([body], { type: "application/x-ndjson" }));
+  a.download = "labels.jsonl";
+  a.click();
+};
+show();
+</script>
