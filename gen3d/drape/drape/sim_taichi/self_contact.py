@@ -5,6 +5,8 @@ from .grid import TriangleGrid
 
 
 _LINEAR_CELLS = 512
+# Vulkan caps a dispatch at 65535 workgroups of 128; larger slot buffers are strided
+MAX_THREADS = 65535 * 128
 _EPS = 1.0e-6
 _DENOM_EPS = 1.0e-5
 _SEG_EPS = 1.0e-3
@@ -255,7 +257,15 @@ class SelfContact:
         if self.n_faces:
             self.edge_neighbour.from_numpy(_edge_neighbours(np.asarray(sim.scene.arrays["faces"], dtype=np.int64)))
         self.pt_filtered.fill(1)
-        self.ee_filtered.fill(1)
+        self._fill_ee_filtered()
+
+    @ti.kernel
+    def _fill_ee_filtered(self):
+        for thread in range(min(self.ee_capacity, MAX_THREADS)):
+            slot = thread
+            while slot < self.ee_capacity:
+                self.ee_filtered[slot] = 1
+                slot += MAX_THREADS
 
     @ti.func
     def _segment_pierce_face(self, vi, vj):
@@ -654,8 +664,11 @@ class SelfContact:
 
     @ti.kernel
     def _solve_ee(self, relaxation: ti.f32):
-        for slot in range(self.ee_capacity):
-            self._solve_ee_slot(slot, relaxation)
+        for thread in range(min(self.ee_capacity, MAX_THREADS)):
+            slot = thread
+            while slot < self.ee_capacity:
+                self._solve_ee_slot(slot, relaxation)
+                slot += MAX_THREADS
 
     @ti.kernel
     def _count_intersections(self):

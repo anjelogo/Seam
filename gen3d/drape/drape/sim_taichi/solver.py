@@ -7,6 +7,7 @@ from . import constraints
 from .attach import Attachments
 from .integrate import integrate, snapshot
 from .io import Scene, SceneFormatError
+from .self_contact import MAX_THREADS
 
 
 _ARCHES = {"vulkan": ti.vulkan, "metal": ti.metal, "cuda": ti.cuda, "cpu": ti.cpu}
@@ -279,8 +280,11 @@ class Sim:
             for slot in range(self.self_contact.pt_capacity):
                 self.self_contact._solve_pt_slot(slot, self.self_contact.relaxation)
         if ti.static(self.flag_ee_on):
-            for slot in range(self.self_contact.ee_capacity):
-                self.self_contact._solve_ee_slot(slot, self.self_contact.relaxation)
+            for thread in range(min(self.self_contact.ee_capacity, MAX_THREADS)):
+                slot = thread
+                while slot < self.self_contact.ee_capacity:
+                    self.self_contact._solve_ee_slot(slot, self.self_contact.relaxation)
+                    slot += MAX_THREADS
         if ti.static(self.flag_springs_on):
             for s in range(self.n_springs):
                 self._solve_spring(s, dt)
