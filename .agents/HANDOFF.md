@@ -9,6 +9,11 @@ Format:
 
 ---
 
+## 2026-10-29 04:00 · anjelo · gen3d drape taichi full set
+- taichi engine ran all 19 reference rows on the A770: runs, bottoms, blind review (19/19 equivalent), speed (31–44 s) and VRAM (≤ 736 MB) pass; shape 18/19 and gates 17/19 miss at the bar (sweats shape, hoodie + tee XS armhole); details in gen3d/drape/RESULTS_TAICHI.md
+- sim records now carry `vram_peak_mb`, `vram_baseline_mb`, `vram_peak_raw_mb`, `vram_samples` (Windows PDH adapter counter); blind-review injection traced to an opencode plugin hook, gen3d/drape/REVIEW_PROVENANCE.md
+- action needed: none (gen3d drape only; Newton stays the default, nothing wired into prod)
+
 ## 2026-10-28 23:10 · anjelo · gen3d drape taichi spike
 - new spike engine `drape.sim_taichi` (gstaichi 4.6.0, Vulkan/Metal/CUDA/CPU) runs a portable scene file from `python -m drape.scene export`; `drape.drape --engine newton|taichi --scene <npz>` runs one; format in gen3d/drape/SCENE_FORMAT.md
 - Windows sim env: `drape/scripts/setup_taichi.ps1` (`.venv-taichi`, gstaichi + numpy only); macOS: `setup_taichi.sh`

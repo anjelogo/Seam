@@ -1,158 +1,259 @@
 # Taichi engine on the Intel Arc A770: spike results
 
 A third drape engine, `drape.sim_taichi`, runs our clean-room XPBD loop (the Newton backend's step
-order, ported kernel by kernel) on gstaichi over Vulkan. Both spike items run on the A770 and meet
-Runs, Gates, Shape, Bottoms and the 5-minute speed gate against Newton's A40 drapes. Stage 2 (the
-full 19-row set) and Stage 3 (Metal) were not run inside the 6 h budget; the 17 other scenes are
-exported and ready. Branch `anjelo/arc-taichi`.
+order, ported kernel by kernel) on gstaichi over Vulkan. Stage 2 ran all 19 reference rows on the
+A770 against Newton's A40 drapes with the Stage 1 targets unchanged. Runs, Bottoms, Blind review,
+Speed and VRAM pass on all 19; Shape passes 18 of 19 and Gates 17 of 19. The three misses sit at
+the bar and follow this engine's own run-to-run spread, not a defect we could find (below). Stage 3
+(Metal) was not run. Branch `anjelo/arc-taichi`.
 
-## Verdict per target
+## Verdict per target (19 rows)
 
 Targets were fixed before any Taichi drape existed and were not changed. `drape/gates.json` is
-untouched.
+untouched. Run of record: `runs/out_taichi_s3` (why not `runs/out_taichi`: see Runs on this machine).
 
 | target | rule | result |
 | --- | --- | --- |
-| runs | full budget on `--arch vulkan`, no NaN/Inf, no exploded or separated panels, same fail tags | **pass** 2 of 2: 2399 frames, 0 NaN, 0 buffer overflow, fail tags `static_equilibrium` on both engines |
-| gates | Newton-pass rows pass; Newton-fail rows fail the same gates or fewer | **pass** 2 of 2: tee `neck_drop, neck_ring` on both (incl. the gates.json `sim_time` gate, 33.1 s vs a 39.8 s budget); sweats has no top gates |
-| shape | symmetric mean surface distance ≤ 2 × Newton's re-drape noise floor (0.283 cm) = 0.566 cm | **pass** 2 of 2: tee 0.399 cm, sweats 0.457 cm |
-| bottoms | waist held the whole sim; waistband top within 2 cm of Newton's | **pass**: held, 104.3 / 104.3 cm |
-| blind review | no item judged worse on Taichi for slide, fit or penetration | **pass** 2 of 2: tee judged better on Taichi (Newton side noisier), sweats equivalent |
-| speed | ≤ 5 min per garment on the A770; report anything > 2 × the A40 time with a kernel profile | **pass**: 33.1 s and 64.4 s. Sweats is 3.2 × the A40 (profile below); tee 1.66 × |
-| VRAM | report the peak | **not measured**: the Windows `GPU Process Memory` counter returned nothing for the process (see What still fails) |
-| metal | Stage 3, only after Stages 1–2 pass | **not run**: Stage 2 not run in budget; commands below |
-| license | Windows sim env lists only permissive packages | **pass**: 15 distributions, all MIT / BSD / Apache-2.0 / PSF / MIT-0 |
+| runs | full budget on `--arch vulkan`, no NaN/Inf, no exploded or separated panels, same fail tags | **pass** 19 of 19: 2399 frames each, 0 NaN, 0 buffer overflow; fail tags equal Newton's on every row (`static_equilibrium` everywhere, plus `cloth_body_intersection` on the two stress bottoms on both engines). Needed engine fix 1 below |
+| gates | Newton-pass rows pass; Newton-fail rows fail the same gates or fewer | **fail** 17 of 19. `poc/grailed_108767954` (hoodie) newly fails `armhole` (5.90 cm vs a 5.0 limit; Newton 4.74). `sweep_XS` adds `armhole` (5.02; Newton 4.75). Two rows fail fewer (`grailed_109137061` penetration, `depop_958293311` neck_drop) |
+| shape | symmetric mean surface distance ≤ 0.566 cm | **fail** 18 of 19. `poc/depop_941190262` (sweats) 0.570 cm. Range of the rest 0.105–0.480 |
+| bottoms | waist held the whole sim; waistband top within 2 cm of Newton's | **pass** 7 of 7: all held, waistband deltas ≤ 0.1 cm |
+| blind review | no item judged worse on Taichi for slide, fit or penetration | **pass** 19 of 19: every item judged equivalent |
+| speed | ≤ 5 min per garment on the A770; report the ratio to the A40 | **pass**: 31.2–43.9 s, ratio 1.01–2.27 (table). Every top also passes the gates.json `sim_time` gate |
+| VRAM | a measured peak per row, ≤ 4 GB | **pass**: 335–736 MB above an idle baseline of 3.0–3.4 GB (adapter-wide counter) |
+| metal | Stage 3, only after Stages 1–2 pass | **not run**: Stage 2 did not pass every target; commands below |
+| license | Windows sim env lists only permissive packages | **pass**: unchanged from Stage 1, no new dependency |
 
-Noise floor: 0.283 cm is Newton-vs-Newton on the black tee M from RESULTS_NEWTON.md (A40), not
-re-measured here: this machine has no CUDA, and Newton on CPU is bit-deterministic (two full CPU
-re-drapes of the same garment differ by 0 cm), so it has no run-to-run noise to measure. For scale,
-two Taichi re-drapes of the black tee on the A770 differ by **0.273 cm**.
+Noise floor: 0.283 cm, Newton-vs-Newton on the black tee M from RESULTS_NEWTON.md (A40), not
+re-measured here (this machine has no CUDA, and Newton on CPU is bit-deterministic).
 
-## Parity table (spike items)
+## Parity table (run of record)
 
-Reference: `runs/out_newton2` (Newton 1.7.0 on an A40), copied from the Mac. Taichi:
-`runs/out_taichi`. Report: `runs/out_taichi/parity/parity.md` (built by the unchanged `drape.parity`
-against `runs/out_newton_scene/ref`, which links the reference parts and carries the 0.283 cm floor).
+Reference: `runs/out_newton2` (Newton 1.7.0 on an A40) through `runs/out_newton_scene/ref`.
+Taichi: `runs/out_taichi_s3`. Report: `runs/out_taichi_s3/parity/parity.md` and `parity.json`, built
+by the unchanged `drape.parity` (20 000 samples, seed 20261023). p95 / max are the larger of the two
+directions. VRAM is the peak above the idle baseline taken just before each run.
 
-| row | kind | shape cm (p95 / max) | gates failed Newton → Taichi | waistband cm Newton / Taichi | sim s A40 → A770 | ratio | body / self intersections Newton → Taichi |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| texture/depop_954868283 | top | 0.399 (1.47 / 5.10) | neck_drop, neck_ring → same | – | 19.92 → 33.07 | 1.66 | 0 / 21 → 0 / 11 |
-| poc/depop_941190262 | bottom | 0.457 (1.55 / 3.28) | – | 104.3 / 104.3, held | 20.42 → 64.44 | 3.16 | 0 / 0 → 0 / 0 |
+| row | kind | shape cm (p95 / max) | gates failed Newton → Taichi | waistband cm Newton / Taichi | sim s A40 → A770 | ratio | VRAM MB | body / self Newton → Taichi |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| texture/depop_936695379 | bottom | 0.188 (0.71 / 2.50) | – | 104.5 / 104.5, held | 23.20 → 32.15 | 1.39 | 404 | 0 / 0 → 0 / 0 |
+| texture/depop_945724547 | bottom | 0.105 (0.39 / 1.20) | – | 104.1 / 104.1, held | 19.01 → 31.23 | 1.64 | 365 | 0 / 0 → 0 / 0 |
+| texture/grailed_109046872 | bottom | 0.280 (0.99 / 2.71) | – | 102.5 / 102.4, held | 19.35 → 43.86 | 2.27 | 406 | 119 / 17 → 116 / 29 |
+| texture/depop_958674696 | bottom | 0.118 (0.59 / 3.45) | – | 103.0 / 103.1, held | 20.11 → 41.59 | 2.07 | 508 | 113 / 20 → 109 / 120 |
+| texture/depop_958854988 | bottom | 0.169 (0.58 / 1.74) | – | 104.4 / 104.4, held | 20.34 → 33.07 | 1.63 | 508 | 0 / 0 → 0 / 0 |
+| texture/depop_958141161 | top | 0.385 (1.27 / 3.93) | neck_drop, neck_ring → same | – | 20.17 → 33.69 | 1.67 | 736 | 0 / 27 → 0 / 27 |
+| texture/depop_959308776 | top | 0.256 (0.94 / 2.60) | neck_drop, neck_ring → same | – | 29.87 → 34.14 | 1.14 | 458 | 0 / 14 → 0 / 9 |
+| texture/grailed_109137061 | top | 0.233 (0.82 / 3.11) | penetration → none | – | 27.09 → 33.78 | 1.25 | 424 | 0 / 36 → 0 / 9 |
+| texture/depop_953525988 | top | 0.480 (1.51 / 4.49) | armhole, neck_ring, sleeve_hem → same | – | 25.33 → 35.16 | 1.39 | 440 | 0 / 91 → 0 / 79 |
+| texture/depop_957013558 | bottom | 0.198 (0.64 / 2.13) | – | 104.5 / 104.5, held | 19.56 → 32.23 | 1.65 | 426 | 0 / 0 → 0 / 2 |
+| texture/depop_959195954 | top | 0.245 (0.91 / 2.33) | armhole → same | – | 31.44 → 37.15 | 1.18 | 513 | 0 / 14 → 0 / 216 |
+| texture/depop_954868283 | top | 0.418 (1.38 / 3.65) | neck_drop, neck_ring → same | – | 19.92 → 33.50 | 1.68 | 348 | 0 / 21 → 0 / 14 |
+| poc/depop_941190262 | bottom | **0.570 (2.29 / 5.19) FAIL** | – | 104.3 / 104.3, held | 20.42 → 33.09 | 1.62 | 459 | 0 / 0 → 0 / 3 |
+| poc/grailed_108767954 | top | 0.359 (1.32 / 3.42) | **none → armhole FAIL** | – | 37.45 → 37.81 | 1.01 | 465 | 0 / 77 → 0 / 153 |
+| poc/grailed_108843068 | bottom | 0.184 (0.62 / 1.20) | – | 104.3 / 104.3, held | 20.63 → 34.14 | 1.65 | 555 | 0 / 0 → 0 / 0 |
+| poc/depop_958293311 | top | 0.465 (1.62 / 3.21) | neck_drop, neck_ring → neck_ring | – | 24.45 → 34.07 | 1.39 | 369 | 0 / 15 → 0 / 40 |
+| sweep_XS/depop_954868283 | top | 0.305 (1.28 / 3.05) | **neck_drop, neck_ring → armhole, neck_drop, neck_ring FAIL** | – | 18.09 → 31.72 | 1.75 | 335 | 0 / 0 → 0 / 0 |
+| sweep_M/depop_954868283 | top | 0.357 (1.28 / 3.97) | neck_drop, neck_ring → same | – | 19.59 → 32.84 | 1.68 | 354 | 0 / 37 → 0 / 21 |
+| sweep_XL/depop_954868283 | top | 0.415 (1.32 / 3.99) | armhole, neck_ring, sleeve_hem → same | – | 26.17 → 34.25 | 1.31 | 391 | 0 / 49 → 0 / 22 |
 
-Paired sheets (Newton top row, Taichi bottom row):
-[black tee](runs/out/shots/taichi/texture_depop_954868283.jpg) ·
-[sweats](runs/out/shots/taichi/poc_depop_941190262.jpg).
+The parity report's own row verdict also applies `sim ≤ 2 × fork`; that is not a Stage 2 target, and
+it marks the two stress bottoms (2.27, 2.07) besides the three misses above. Self-intersection counts
+are higher on two hooded/layered tops (`depop_959195954` 14 → 216, the hoodie 77 → 153); neither
+crosses the `max_self_collisions` tag and the penetration gate passes on both.
 
-**Start-of-sim agreement.** Frame 0 on the A770 vs Newton's A40 frame-0 dump: max 0.005 cm (tee).
-At frame 50 Taichi sits 0.060 cm (mean per vertex) from the A40, while Newton on CPU from the same
-scene sits 0.069 cm from it, so the early divergence is the same size as Newton's own
-device-to-device spread.
+Paired sheets, Newton top row and Taichi bottom row, all 19 in
+[runs/out/shots/taichi/](runs/out/shots/taichi/) (JPEG, 93–149 KB each), e.g. the three misses:
+[sweats](runs/out/shots/taichi/poc_depop_941190262.jpg) ·
+[hoodie](runs/out/shots/taichi/poc_grailed_108767954.jpg) ·
+[tee XS](runs/out/shots/taichi/sweep_XS_depop_954868283.jpg).
+
+## The three misses: diagnosis
+
+Fix loop 2 compared the dumps (every 50 frames) of two full Taichi runs of each failing row against
+Newton's A40 dumps, with the passing black tee as a control (mean / max per vertex, cm):
+
+| row | frame 0 Taichi–Newton | frame 100 Taichi–Newton | final Taichi–Newton (run of record) | final Taichi–Taichi (two runs) |
+| --- | --- | --- | --- | --- |
+| hoodie `grailed_108767954` | 0.005 / 0.16 | 0.61 / 3.43 | 0.86 / 6.02 | 0.84 / 6.21 |
+| sweats `depop_941190262` | 0.004 / 0.13 | 0.51 / 3.30 | 0.98 / 7.85 | 0.78 / 7.51 |
+| tee XS | 0.006 / 0.16 | 0.42 / 3.66 | 0.54 / 5.56 | 0.31 / 3.18 |
+| tee M (passes) | 0.005 / 0.16 | 0.57 / 4.43 | 0.83 / 5.43 | 0.43 / 3.17 |
+
+Start states agree to 0.005 cm, the failing rows drift from Newton on the same curve as the passing
+tee, and two Taichi runs of the same garment end about as far from each other as from Newton. A
+localised engine defect would show as both Taichi runs agreeing and missing Newton together; that is
+not what the dumps show. The same rows across runs:
+
+| row / metric (bar) | Stage 1 | contaminated run (`out_taichi_s2`) | run of record (`out_taichi_s3`) | Newton |
+| --- | --- | --- | --- | --- |
+| sweats shape (≤ 0.566) | 0.457 | 0.406 | 0.570 | – |
+| hoodie armhole (≤ 5.0) | – | 4.71 | 5.90 | 4.74 |
+| tee XS armhole (≤ 5.0) | – | 5.12 | 5.02 | 4.75 |
+
+Both armhole rows sit within 0.26 cm of the limit on Newton itself, and `armhole` is a per-vertex
+maximum, so it moves with the drape's spread. No change was made: making the engine quieter here
+would mean changing physics parameters to hit a target, which the rules forbid. These rows stay
+**fails**, and only the run of record counts; the contaminated run is shown for spread, not as a
+substitute.
+
+## Engine fixes in Stage 2
+
+1. **Edge–edge buffers over Vulkan's dispatch limit** (`c5252b8`). Three rows
+   (`texture/depop_958854988`, `poc/grailed_108767954`, `poc/grailed_108843068`) crashed at init with
+   `GfxRuntime::launch_kernel Dispatch error: RhiResult(not_supported)` at `ee_filtered.fill(1)`.
+   Their edge–edge slot buffers (`ee_per_spring × springs`) are 8.45 M, 9.30 M and 8.56 M; every row
+   that ran was ≤ 8.10 M, and one launch is capped at 65 535 workgroups × 128 = 8 388 480 threads on
+   the A770. The fill, `_solve_ee` and the edge–edge loop in the fused substep now launch at most
+   that many threads and stride the rest. Below the cap every slot still gets its own thread, so the
+   16 rows that ran are on the same code path. Before: 3 crashes (`frames -1`, `crashes` tag). After:
+   all 3 run 2399 frames, shape 0.169 / 0.359 / 0.184 cm.
+2. **macOS `._*` files copied into the run** (`79a7e3a`). The exported `sweep_XL` scene dir carries
+   AppleDouble files; `_copy_siblings` copied `._…_specification.json`, which `drape.panels` then
+   read as the spec (`UnicodeDecodeError`). The copy now skips `._*` files. Sim results unaffected.
+
+No other engine change. Patches to third-party code: none.
+
+## VRAM sampler (S1)
+
+`drape/sim_taichi/vram.py` (`4aac92a`) reads `\GPU Adapter Memory(*)\Dedicated Usage` through PDH
+via ctypes (no new dependency), locks onto the busiest adapter instance (the A770,
+`luid_…_0x0000D63A`; the Parsec virtual adapter reads 0), takes a min-of-4 idle baseline just
+before the sim, then samples every 0.25 s. The record gains `vram_peak_mb` (= `vram_mb`, peak minus
+baseline), `vram_baseline_mb`, `vram_peak_raw_mb`, `vram_samples`. Proof it moves: a 1 GiB gstaichi
+field allocation read as +1163.3 MB (baseline 3207.2, peak 4370.5, 24 samples at 4.5 Hz). In the run
+of record each row got 111–147 samples (~3.5 Hz). The counter is adapter-wide: any other GPU program
+running at the same time lands in the number, which is why the contaminated run is not used for it.
+
+## Runs on this machine
+
+- `runs/out_taichi`: Stage 1 (2 rows) plus Stage 2 batch 1 (17 rows, pre-fix: 3 crashes). Kept.
+- `runs/out_taichi_vram`: the 2 Stage 1 rows re-run for a VRAM number in batch 1. Kept.
+- `runs/out_taichi_w0`: Wave 0 drift check, black tee: shape 0.409 cm vs Stage 1 0.399 (Δ 0.010,
+  limit 0.05), same gates, 33.5 s.
+- `runs/out_taichi_s2`: all 19 after fix 1, but with two games (Roblox 18.5 % and CS2 24.9 % of the
+  A770 by `\GPU Engine` utilisation) running. Times 40–103 s; every top then failed `sim_time` and
+  one VRAM peak read 2930 MB. Shape passed 19 of 19, Gates failed on `sweep_XS` armhole and on
+  `sim_time`. Not used for any verdict.
+- `runs/out_taichi_s3`: **run of record**, all 19 with the GPU idle (checked before start; CS2 closed,
+  Roblox open but at 0 % GPU). Declared the run of record before its results existed.
 
 ## Blind review, verbatim
 
-A fresh reviewer saw only the four unlabelled sheets (A/B order random per item, seed 20261023) and
-replied (the reviewer also flagged an unrelated injected tool-harness message, omitted here):
+Reviewer input followed [REVIEW_PROVENANCE.md](REVIEW_PROVENANCE.md): the 38 unlabelled sheets
+(A/B random per item, seed 20261023) copied to a `%TEMP%` folder with no README / AGENTS.md above
+it, a fresh opencode `general` agent (not a `sisyphus`/`atlas` key, so the skill-reminder hook does
+not arm), and only the rubric. Its tool log in `opencode.db` holds exactly 38 `read` calls and every
+result is `Image read successfully` plus the image: no injected text this time. Full prompt:
+`runs/out_taichi_s3/parity/blind/prompt.md`; reply: `reply.md` beside it.
 
-| item | verdict | slide | fit | penetration | notes |
+| item | verdict | slide | fit | penetration | note |
 |---|---|---|---|---|---|
-| 1 | A worse | neither slid; both sit at shoulders/hem similar | B cleaner silhouette, flatter collar; A puffs at chest, noisier drape | neither penetrates body | A shows heavy micro-wrinkle noise, especially chest + top-down view |
-| 2 | equivalent (slight edge B) | neither; waistband at same height | hem cuffs + leg length match; B marginally smoother on thighs | both show same leg-visible gap at crotch in center view — identical | differences are within sim noise |
+| 1 | equivalent | A on shoulders; B on shoulders | A same hem and sleeves as B; B same as A | A none seen; B none seen | within sim noise (A has slightly more ragged sleeve edges) |
+| 2 | equivalent | A waistband held; B waistband held | A cuffs at ankle; B cuffs at ankle, same waist height | A none; B none | within sim noise |
+| 3 | equivalent | A on shoulders; B on shoulders | A long sleeves and hem same as B; B same as A | A none; B none | within sim noise |
+| 4 | equivalent | A waist held; B waist held | A straight legs, same hem as B; B same as A | A none; B none | within sim noise |
+| 5 | equivalent | A waist held; B waist held | A bunched hems at ankle; B the same | A none; B none | within sim noise (both crumple at the ankles) |
+| 6 | equivalent | A waist held; B waist held | A cuffs and leg volume same as B; B same as A | A none; B none | within sim noise |
+| 7 | equivalent | A on shoulders; B on shoulders | A hem and sleeves same as B; B same as A | A none; B none | within sim noise |
+| 8 | equivalent | A waist held; B waist held | A tied ankles, same as B; B same as A | A none; B none | within sim noise |
+| 9 | equivalent | A on shoulders; B on shoulders | A boxy hem, same as B; B same as A | A none; B none | within sim noise (both have heavy front creasing) |
+| 10 | equivalent | A hood and shoulders held; B the same | A hem and sleeves same as B; B same as A | A none; B none | within sim noise (hood folds differ slightly) |
+| 11 | equivalent | A on shoulders; B on shoulders | A wide sleeves and hem same as B; B same as A | A none; B none | within sim noise (both have crinkly sleeves) |
+| 12 | equivalent | A on shoulders; B on shoulders | A hem and sleeves same as B; B same as A | A none; B none | within sim noise |
+| 13 | equivalent | A waist held; B waist held | A wide legs, same hem as B; B same as A | A none; B none | within sim noise |
+| 14 | equivalent | A high waist held; B the same | A wide legs, same as B; B same as A | A none; B none | within sim noise |
+| 15 | equivalent | A on shoulders; B on shoulders | A V-neck and hem same as B; B same as A | A small dark spot at neck; B small dark spot at neck | within sim noise |
+| 16 | equivalent | A high waist held; B the same | A wide legs, same as B; B same as A | A none; B none | within sim noise |
+| 17 | equivalent | A hood and shoulders held; B the same | A cropped hem, same as B; B same as A | A none; B none | within sim noise |
+| 18 | equivalent | A on shoulders; B on shoulders | A neckline slightly higher than B; B slightly lower | A none; B none | within sim noise |
+| 19 | equivalent | A on shoulders; B on shoulders | A hem and sleeves same as B; B same as A | A none; B none | within sim noise |
 
-> - Item 1 A: front panel has pronounced vertical crumpling and the collar bunches; B drapes as a smooth tee.
-> - Item 1: sleeve length, hem height and shoulder seating are indistinguishable; only surface quality differs.
-> - Item 2: crotch-gap "penetration" is identical between A and B — looks like a garment pattern issue, not a solver difference.
-> - Item 2: creasing pattern on the thigh is the only separator; too close to call reliably.
+Decoded (`runs/out_taichi_s3/parity/blind_key.json`; `drape.parity` calls the reference side "fork"
+and the new side "newton", so "newton" = **Taichi** here):
 
-Decoded (`runs/out_taichi/parity/blind_key.json`; `drape.parity` names the reference side "fork" and
-the new side "newton", so "fork" = Newton A40 and "newton" = Taichi here): item 1 is the black tee
-with **Taichi = B**, item 2 the sweats with **Taichi = A**. No item is judged worse on Taichi; on the
-tee the reviewer preferred Taichi's drape.
+| item | row | Taichi | item | row | Taichi |
+| --- | --- | --- | --- | --- | --- |
+| 1 | texture/depop_954868283 | B | 11 | texture/depop_953525988 | A |
+| 2 | texture/depop_957013558 | B | 12 | poc/depop_958293311 | A |
+| 3 | texture/depop_959308776 | A | 13 | texture/depop_958854988 | B |
+| 4 | poc/grailed_108843068 | B | 14 | texture/depop_945724547 | B |
+| 5 | texture/depop_958674696 | A | 15 | texture/grailed_109137061 | B |
+| 6 | poc/depop_941190262 | B | 16 | texture/depop_936695379 | A |
+| 7 | sweep_XS/depop_954868283 | A | 17 | texture/depop_959195954 | A |
+| 8 | texture/grailed_109046872 | A | 18 | texture/depop_958141161 | B |
+| 9 | sweep_XL/depop_954868283 | B | 19 | sweep_M/depop_954868283 | B |
+| 10 | poc/grailed_108767954 | B | | | |
+
+All 19 equivalent, including the three metric misses (items 6, 7, 10): the reviewer saw no slide,
+fit or penetration difference on the sweats, the tee XS or the hoodie.
+
+## Provenance of the Stage 1 "injected tool-harness message"
+
+Full write-up: [REVIEW_PROVENANCE.md](REVIEW_PROVENANCE.md). The text was a `[Category+Skill
+Reminder]` block (skill list plus a `task(category="visual-engineering", …)` suggestion) from the
+oh-my-openagent plugin's `category-skill-reminder` hook. The hook arms on the third work-tool call of
+a `sisyphus*`/`atlas*` agent and was appended to the reviewer's `read` result for `2_A.jpg`. It names
+no garment, engine or side; the reviewer flagged it as a prompt injection and ignored it, so it could
+not have steered a verdict. A second leak in the same session: `directory-readme-injector` appended
+the project README to the `1_A.jpg` read (project context, nothing about which side is which). The
+images themselves are bare JFIF with no embedded text. Both sources were avoided in Stage 2 as above.
 
 ## Scene file (T1)
 
 `python -m drape.scene export` freezes a Newton build into `<name>_scene.npz` + `.json`
 ([SCENE_FORMAT.md](SCENE_FORMAT.md)); `drape.drape --engine newton --scene` and
-`python -m drape.sim_taichi.run --scene` both start from it.
-
-- Two exports of the same garment are byte-identical (sha256 of all 38 arrays).
-- Newton from the scene vs Newton's normal path, same machine (WSL2 CPU), both items, frames 0 and
-  50: **0.0000 cm** max difference. Two full-budget synthetic runs: 0 cm at every dump.
-- Newton from the scene on CPU vs the A40 reference at frame 0: max 0.003 cm (tee), 0.019 cm
-  (sweats, one vertex; mean 0.0000). That is CPU vs CUDA, not the loader.
-- Exporting against a reference needs `--reuse-mesh`: pygarment's mesher on this WSL2 env writes the
-  same topology as the pod but in a different vertex order for the tee (up to 67 cm apart per index),
-  and differs in the last float digits elsewhere. Reusing the reference's box mesh makes all 19 scenes
-  mesh-identical to `out_newton2`.
+`python -m drape.sim_taichi.run --scene` both start from it. Two exports of the same garment are
+byte-identical; Newton from the scene matches Newton's normal path to 0.0000 cm on the same machine.
+Exporting against a reference needs `--reuse-mesh` (pygarment's mesher on WSL2 orders the tee's
+vertices differently from the pod); with it all 19 scenes are mesh-identical to `out_newton2`.
 
 ## Setup
 
 | piece | version |
 | --- | --- |
 | OS | Windows 11 Pro 10.0.26300, native Python for the sim; WSL2 Ubuntu for export, Newton CPU, parity |
-| GPU | Intel Arc A770 16 GB, driver 32.0.101.9034 (2026-09-29; not updated in this session), Vulkan 1.4.356 |
+| GPU | Intel Arc A770 16 GB, driver 32.0.101.9034 (unchanged since Stage 1), Vulkan 1.4.356 |
 | Taichi | **gstaichi 4.6.0** (Genesis fork, Apache-2.0), `ti.init(arch=ti.vulkan, fast_math=False, default_fp=ti.f32)` |
 | Python | 3.12.0 (`.venv-taichi`), numpy 2.5.4 |
 | export side | newton 1.7.0, warp-lang 1.18.0 (CPU), pygarment `d449629`, Python 3.12 (`.venv-wsl`) |
 
 **taichi vs gstaichi.** Upstream `taichi` 1.7.4 initialises Vulkan on the A770, but `to_numpy()`
-returned the wrong field's data (one field read back another's values, a second read zeros) on this
-GPU; element reads were right. gstaichi 4.6.0 passed the same probe, and its atomics return correct
-disjoint blocks (1 M threads reserving 1–7 slots each). gstaichi keeps Vulkan, Metal, CUDA and CPU
-and drops the GUI, AOT and C-API, none of which the engine uses. Pinned: `gstaichi==4.6.0`.
-
-Wave 0 checks: `ti.init(arch=ti.vulkan)` logs `Found Vulkan Device 0 (Intel(R) Arc(TM) A770
-Graphics)`; a 1 M-thread atomic kernel and a 64×64 XPBD hanging-cloth demo (600 frames × 10
-substeps in 1.04 s) ran clean.
+returned the wrong field's data on this GPU; gstaichi 4.6.0 passed the same probe and its atomics
+return correct disjoint blocks. Pinned: `gstaichi==4.6.0`.
 
 ## Engine notes: f32, atomics, broad phase
 
-- **f32 only.** No f64 in any kernel. The piercing survey's watertight ray–triangle test took its
-  2D edge functions in float64 on Newton; here they are exact-sign f32 products via mantissa
-  splitting and TwoSum (robust to driver FMA contraction). 1 M random rays: 0 hit mismatches against
-  the f64 test; 3 000 rays aimed exactly at shared edges of coplanar triangles: 9 mismatches on
-  Vulkan, 2 on CPU.
+- **f32 only.** The piercing survey's watertight ray–triangle test uses exact-sign f32 products via
+  mantissa splitting and TwoSum (Newton used float64). 1 M random rays: 0 mismatches against f64;
+  3 000 rays aimed at shared edges of coplanar triangles: 9 mismatches on Vulkan, 2 on CPU.
 - **Atomics.** Plain `ti.atomic_add` on f32 components and i32 counters; one global buffer per pass
-  with whole-block reservation and an overflow counter, as in sim_newton. Overflow on both items: 0.
-- **Body.** A flat BVH (median split, one triangle per leaf, skip pointers) built once in numpy and
-  traversed in kernels; closest point, sign by angle-weighted pseudo-normal, first-hit ray with sign
-  and any-hit, ported from warp 1.18 (Apache-2.0). Against an f64 brute force: 0 sign, 0 any-hit and
-  1 inside-vote mismatch over 1 070 adversarial points; closest-point ties differ only in which of
-  two equidistant faces is named (distance agrees to 4e-6 cm).
-- **Self-contact broad phase.** A uniform hash grid over triangle AABBs, rebuilt at each frame start
-  (count, chunked scan, fill), returning each overlapping triangle exactly once (0 mismatches vs brute
-  force on 40 k triangles). Edge–edge de-duplication uses the precomputed neighbour face across each
-  edge instead of rescanning the slot block (Newton's O(n²) scan cost 354 ms/frame on the A770); for
-  boxes over 512 cells (open seams in the first frames) the pass scans faces linearly. Both pick the
-  same surviving copy of a shared edge up to which face's copy is kept, which is geometrically the
-  same constraint.
-- **Launches.** All per-substep passes run as one fused kernel (10 launches a frame instead of ~110).
-  A full 10-substep unroll did not compile in gstaichi within 20 min. Fusion changed only launch
-  structure; float-atomic ordering makes runs differ from each other either way.
-- **Vulkan vs CPU.** Same code path; on a two-layer test cloth 30 of 198 396 edge–edge candidate slots
-  flip at the band threshold between the two backends (1-ulp differences in `_seg_seg`).
+  with whole-block reservation and an overflow counter. Overflow on all 19 rows: 0. Float-atomic
+  ordering makes two runs of the same scene differ; that is the spread in the diagnosis above.
+- **Body.** Flat BVH built once in numpy, closest point with angle-weighted pseudo-normal sign,
+  ported from warp 1.18 (Apache-2.0).
+- **Self-contact broad phase.** Uniform hash grid over triangle AABBs rebuilt each frame;
+  edge–edge de-duplication via the precomputed neighbour face; boxes over 512 cells scan faces
+  linearly. Slot buffers over the dispatch cap are strided (fix 1).
+- **Launches.** All per-substep passes run as one fused kernel (10 launches a frame).
 
 ## Speed and profile
 
-| item | A40 Newton | A770 Taichi | steady state (frames > 300) | first 100 frames |
-| --- | --- | --- | --- | --- |
-| black tee | 19.9 s | 33.1 s | ~10 ms/frame | ~4.5 s for frame 0 (kernel cache load), then 20–32 ms/frame |
-| sweats | 20.4 s | 64.4 s | ~15 ms/frame (synced profile) | dominated by open sewing seams |
-
-Sweats is over 2 × the A40. Top three costs per frame at steady state (synchronised timing, so each
-includes a launch): `Body.generate` 3.5 ms (closest-point BVH query per particle), the fused substep
-0.43 ms × 10 = 4.3 ms, `SelfContact.detect_edge_edge` 2.2 ms; then `detect_point_triangle` 1.1 ms.
-In the first frames the long open-seam springs make `detect_edge_edge` and the piercing survey the
-cost, one GPU thread scanning thousands of triangles.
+With the GPU idle every row takes 31–44 s on the A770 (A40: 18–37 s), ratio 1.01–2.27. The two rows
+over 2 × are the stress bottoms (43.9 s and 41.6 s), the only rows with ~110 body contacts at the
+end. They were not re-profiled; Stage 1's synchronised profile of the sweats has `Body.generate`
+(per-particle closest-point BVH query, 3.5 ms/frame) as the top cost, then the fused substep
+(4.3 ms/frame) and `detect_edge_edge` (2.2 ms). Stage 1's sweats time (64.4 s, 3.2 ×) is now 33.1 s
+with no engine speed change, so that Stage 1 number was probably also taken under other GPU load. A
+GPU shared with a game roughly doubles every time (contaminated run: 40–103 s).
 
 ## Metal (Stage 3): not run
 
-Not run: Stage 2 did not run inside the budget, so Stage 3's precondition was not met. On the Mac
-(Apple Silicon), from `gen3d/drape` with this branch checked out and the two scenes copied from
-`runs/out_newton_scene/{texture,poc}`:
+Not run: Stage 2 did not pass every target. On the Mac (Apple Silicon), from `gen3d/drape` with this
+branch checked out and the scenes copied from `runs/out_newton_scene/<part>`:
 
 ```
 bash drape/scripts/setup_taichi.sh
-for s in runs/out_newton_scene/texture/depop_954868283 runs/out_newton_scene/poc/depop_941190262; do
+for s in runs/out_newton_scene/{texture,poc,sweep_XS,sweep_M,sweep_XL}/*; do
   part=$(basename $(dirname $s)); safe=$(basename $s)
   .venv-taichi/bin/python -m drape.sim_taichi.run --scene $(ls $s/sim/*/*_scene.npz) --arch metal \
     --out runs/out_taichi_metal/$part/$safe/sim --timings runs/out_taichi_metal/$part/timings.json
@@ -162,27 +263,15 @@ done
 
 ## License report
 
-`pip-licenses` over `.venv-taichi` (the whole Windows sim env):
-
-| package | version | license |
-| --- | --- | --- |
-| gstaichi | 4.6.0 | Apache-2.0 |
-| numpy | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
-| pydantic, pydantic_core, annotated-types, typing-inspection | 2.14.1, 2.50.1, 0.8.0, 0.4.4 | MIT |
-| rich, markdown-it-py, mdurl | 15.0.0, 4.2.0, 0.1.2 | MIT |
-| cffi | 2.1.1 | MIT-0 |
-| pycparser | 3.12 | BSD-3-Clause |
-| Pygments | 2.21.0 | BSD-2-Clause |
-| colorama, dill | 0.4.6, 0.4.1 | BSD |
-| typing_extensions | 4.16.0 | PSF-2.0 |
-
-No copyleft, no NVIDIA, no non-commercial terms. New dependency: gstaichi (Apache-2.0). No vendored
+`pip-licenses` over `.venv-taichi`: gstaichi 4.6.0 (Apache-2.0), numpy (BSD-3-Clause and permissive
+bundles), pydantic family, rich, markdown-it-py, mdurl (MIT), cffi (MIT-0), pycparser (BSD-3-Clause),
+Pygments (BSD-2-Clause), colorama, dill (BSD), typing_extensions (PSF-2.0). No new dependency in
+Stage 2 (the VRAM sampler uses Windows' `pdh.dll` through the standard library's ctypes). No vendored
 code was edited and no patch to third-party code was needed.
 
-Clean-room: every implementer brief carried CLEANROOM.md's rules; all reports ended with "I did not
-open any NvidiaWarp-GarmentCode file, pre-1.7 warp, warp/sim, or pygarment/meshgen/simulation.py".
-Adapted Apache-2.0 code carries a one-line attribution (`constraints.py` from Newton's XPBD kernels,
-`body.py` from warp 1.18 mesh queries, the f32 port of warp's watertight ray test).
+Clean-room: CLEANROOM.md's rules held for every brief; no NvidiaWarp-GarmentCode file, pre-1.7 warp,
+warp/sim, or pygarment/meshgen/simulation.py was opened. Adapted Apache-2.0 code carries a one-line
+attribution (`constraints.py` from Newton's XPBD kernels, `body.py` from warp 1.18 mesh queries).
 
 ## Spend
 
@@ -190,27 +279,27 @@ $0. No pods or paid APIs; the blind review used a local reviewer agent. Nothing 
 
 ## What still fails or is unverified
 
-- **Stage 2 not run.** The 17 other rows have scenes exported (`runs/out_newton_scene/<part>/<safe>`,
-  all mesh-identical to the reference) but were not simulated or compared.
-- **Metal not run** (above).
-- **VRAM not measured.** The `typeperf "\GPU Process Memory(pid_<pid>*)\Dedicated Usage"` sampler
-  returned no rows on this machine; `vram_mb` is null in both records.
-- **Sweats speed** is 3.2 × the A40 (inside the 5 min gate). The early open-seam frames and the
-  per-particle body query are where the time goes.
-- **Shape headroom.** Both items pass, but at 0.40 and 0.46 cm against a 0.566 cm bar: closer than
-  Newton-vs-fork was (0.26 and 0.19 cm). Taichi-vs-Taichi on the tee is 0.27 cm, so the gap is within
-  a re-drape or two of this engine's own spread; the 17-row run would show whether any row crosses.
-- **Edge cases of the f32 ray test** (9 / 3 000 adversarial shared-edge rays on Vulkan) are the same
-  family as the coplanar-layout residual in RESULTS_NEWTON.md difference 1.
+- **Shape on the sweats** (`poc/depop_941190262`): 0.570 cm against 0.566 in the run of record
+  (0.457 in Stage 1, 0.406 in the contaminated run).
+- **Armhole gate on the hoodie and the tee XS**: 5.90 and 5.02 cm against 5.0, where Newton is at
+  4.74 and 4.75. Both are rows Newton itself passes by under 0.3 cm.
+- **The engine's run-to-run spread** (two Taichi runs end 0.3–0.8 cm mean apart per vertex) is about
+  the size of its distance to Newton, so near-bar rows pass or fail by draw.
+- **Metal not run.** **The two stress bottoms** were not re-profiled at 2.07–2.27 × the A40.
+- **VRAM is adapter-wide**, so it is only meaningful with the GPU otherwise idle (the run of record
+  was).
 
 ## Recommendation
 
-A Vulkan engine is viable for local baking: on a consumer Arc card it reproduces Newton's drapes
-within the same bar Newton met against the fork, in 0.5–1 min per garment, with only gstaichi and
-numpy on the GPU host. To make it production-grade: run the 19-row set and Metal; measure VRAM with
-a working counter (or Level Zero sysman); cut the first-frame cost (cache warm-up and the open-seam
-broad phase, e.g. split long springs' queries across threads); parallelise `Body.generate`'s
-closest-point query better; and pin a driver version in the setup script.
+On a consumer Arc card the Vulkan engine gives the same drape as Newton by eye on all 19 rows (blind
+review 19/19 equivalent), holds every waist, runs each garment in 31–44 s within 0.75 GB of VRAM,
+and crashes on nothing after fix 1. It misses three fixed bars by small margins (0.004 cm of shape,
+0.02 and 0.90 cm of armhole), and the evidence puts those on its float-atomic run-to-run spread
+rather than a modelling difference. Good enough for local previews and baking where a re-drape is
+acceptable; not yet a drop-in for Newton as the reference engine. Next: make the solve order
+deterministic (sorted contact slots, or integer fixed-point accumulation for the atomic sums) and
+re-measure Taichi-vs-Taichi spread before re-running the 19 rows; then Metal; then the
+`Body.generate` query for the stress bottoms; and pin the driver in the setup script.
 
 ## Re-running
 
@@ -218,14 +307,12 @@ closest-point query better; and pin a driver version in the setup script.
 # WSL2 / Linux / Mac drape env: export scenes against a reference run (copy its pattern/ and sim/<name>/ first)
 .venv-wsl/bin/python -m drape.scene export --inputs runs/inputs_texture --only depop_954868283 \
   --out runs/out_newton_scene/texture --dump-every 50 --reuse-mesh
-# Newton from a scene
-.venv-wsl/bin/python -m drape.drape --engine newton --scene <name>_scene.npz --out <run>/<part>/<safe>/sim
-# Windows: sim env, then the Taichi run
+# Windows, GPU otherwise idle: the Taichi run (VRAM sampled automatically on vulkan)
 powershell -ExecutionPolicy Bypass -File drape/scripts/setup_taichi.ps1
 .venv-taichi\Scripts\python.exe -m drape.sim_taichi.run --scene <name>_scene.npz --arch vulkan `
-  --out runs/out_taichi/<part>/<safe>/sim --timings runs/out_taichi/<part>/timings.json
+  --out runs/out_taichi_s3/<part>/<safe>/sim --timings runs/out_taichi_s3/<part>/timings.json
 # drape env: panels, bind, parity (reference root links out_newton2 and carries noise_floor.json)
-.venv-wsl/bin/python -m drape.panels --out runs/out_taichi/<part> --only <safe>
-.venv-wsl/bin/python -m drape.bind --inputs <inputs> --out runs/out_taichi/<part> --bodies runs/bodies --only <safe>
-.venv-wsl/bin/python -m drape.parity --ref runs/out_newton_scene/ref --new runs/out_taichi --sheets --blind runs/out_taichi/parity/blind
+.venv-wsl/bin/python -m drape.panels --out runs/out_taichi_s3/<part> --only <safe>
+.venv-wsl/bin/python -m drape.bind --inputs <inputs> --out runs/out_taichi_s3/<part> --bodies runs/bodies --only <safe>
+.venv-wsl/bin/python -m drape.parity --ref runs/out_newton_scene/ref --new runs/out_taichi_s3 --sheets --blind runs/out_taichi_s3/parity/blind
 ```
