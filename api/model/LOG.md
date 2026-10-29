@@ -4,6 +4,15 @@ Newest first. One entry per working session. Format and rules in AGENTS.md.
 
 ---
 
+## 2026-10-28 · agent · H1 on the prod export
+- did: Caden exported prod via /admin to `data/models/snapshots/items-2026-10-28.jsonl` (9,122 rows: depop 6,222, poshmark 1,738, grailed 1,162; 8,656 tagged). Ran H1 on all tagged rows with `api/model/queries/h1_jsonl.py`
+- result (prod health): **all 9,122 rows are `status = gone`**. last_seen stops at 2026-10-24, so scraping stopped then and expire_stale (72 h) expired everything. H1 counts every status for that reason
+- result (H1): leather 11.7% → **18.8%** overall vs the 10-18 snapshot. Shoes 39.2% → 50.6%, outer 3.0% → 16.7%, bottom 0.5% → 8.5%, top 0.0% → 5.0%. Depop 18.9%, grailed 17.7%, poshmark 19.2% (poshmark-only was 11.7%). So after the `leather` query the inventory is leather-heavy, mostly in shoes and outerwear
+- result (H2 hint): 247 of 1,755 shoes are tagged leather with no "leather" in the listing text (was 21 on the snapshot), which supports "the tagger defaults shoes to leather". Unverified until gold v1
+- result (vocab): `tags.material` has ~330 distinct strings; 1,283 tagged items have none, and 51 say "unknown"
+- files: api/model/queries/h1_jsonl.py, data/models/snapshots/items-2026-10-28.jsonl (gitignored)
+- next: tell Anjelo scraping is stopped; draft the material vocabulary from this export; H3/H4 candidate pool
+
 ## 2026-10-28 · agent · admin export for prod data
 - did: built /admin (web) + GET /admin/stats and GET /admin/export/items (api). Admins = ADMIN_EMAILS allowlist; others get 404. The export streams a fixed column list from `items` only, rate-limited (10 / 15 min) and logged. Design mockup: https://claude.ai/artifact/7GqXG6XbujnFV8Qtjgggf7
 - result: anonymous requests 401 (checked locally); the admin path and the export itself are untested, no local Postgres

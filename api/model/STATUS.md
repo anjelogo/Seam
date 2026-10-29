@@ -1,22 +1,22 @@
 # Custom model status
 
-Last updated: 2026-10-28 · Phase: **0 (measure)** · Branch: `caden/custom-model-research`
+Last updated: 2026-10-28 · Phase: **0 (measure)** · Branch: `caden/custom-model-training`
 
 Goal: a Seam-owned model that (1) fixes the leather bias and (2) tags more accurately than the hosted models, starting with tagging (RESEARCH.md §8).
 
 ## In progress
-- **H1 on prod.** Done on the 10-18 snapshot (11.7% leather overall, 3.0% outerwear; LOG 2026-10-25). Prod needs rerunning to see what the `leather` query (added 10-19) did.
-  - **Unblock path: admin export (2026-10-28).** Anjelo says the DB is only reachable inside the Docker network, so instead of SSH there's now `/admin` with an items-table JSONL export (HANDOFF 2026-10-28). Waiting on Anjelo to deploy it and set `ADMIN_EMAILS`. Save each export as `data/models/snapshots/<date>/items.jsonl`.
+- **Prod scraping is stopped (found 2026-10-28).** Every row in the export is `gone` and last_seen ends 2026-10-24. Tell Anjelo; until it runs again, new exports won't have new items.
 
 ## Next (top = do first)
-1. **Draft a material vocabulary (doesn't need prod, so do this while blocked).** A fixed list such as leather / faux_leather / suede / canvas / knit…, mapped from today's free-text `tags.material`. Start from the snapshot's values (`data/seam.db`), then check it against prod. Needed for gold labels and probes.
-2. **Rerun H1 on prod** once Anjelo replies, using the README.md › Step 1 query, and compare with the snapshot baseline. Then write the tested connection steps into README.md.
-3. **Log the candidate pool (H3/H4).** Run 20 fixed style prompts and record the leather share in the pool and in Claude's picks.
-4. **Build gold set v1.** 300 items hand-labelled for material, category, primary color and usable_for_3d (RESEARCH.md §3).
-5. **Score the current tagger on gold v1.** This is the baseline every model has to beat.
-6. **Answer the open questions below that block step 7+.**
+1. **Draft a material vocabulary.** A fixed list such as leather / faux_leather / suede / canvas / knit…, mapped from the ~330 free-text `tags.material` values in the 10-28 export (`h1_jsonl.py` prints them). Needed for gold labels and probes.
+2. **Log the candidate pool (H3/H4).** Run 20 fixed style prompts and record the leather share in the pool and in Claude's picks. Needs active items, so local data or scraping back on.
+3. **Build gold set v1.** 300 items hand-labelled for material, category, primary color and usable_for_3d (RESEARCH.md §3). Oversample shoes: 247 are tagged leather with no "leather" in the text.
+4. **Score the current tagger on gold v1.** This is the baseline every model has to beat.
+5. **Answer the open questions below that block step 6+.**
 
 ## Done
+- 2026-10-28 · H1 on prod export: leather 18.8% overall (was 11.7%), shoes 50.6%, outer 16.7% (LOG 2026-10-28)
+- 2026-10-28 · Prod data access via the /admin export (`data/models/snapshots/`)
 - 2026-10-20 · Research doc: options, training methods, data, path to production (RESEARCH.md)
 - 2026-10-25 · H1 baseline on the 10-18 SQLite snapshot (api/model/queries/h1_sqlite.sql)
 - 2026-10-25 · Model folder and documentation rules set up (AGENTS.md, STATUS.md, LOG.md, README.md)
@@ -29,7 +29,7 @@ Goal: a Seam-owned model that (1) fixes the leather bias and (2) tags more accur
 - 2026-10-25 · Matching "leather" in listing text isn't used as a weak label. Reason: most matches were hashtags or boilerplate (LOG 2026-10-25).
 
 ## Open questions
-- Prod data: waiting on the /admin deploy (see In progress). Also, how did the data get onto his server? It isn't documented anywhere (the 10-18 HANDOFF says "nothing migrated"; the Tailscale copy was abandoned).
+- Prod data: how did the data get onto Anjelo's server? It isn't documented anywhere (the 10-18 HANDOFF says "nothing migrated"; the Tailscale copy was abandoned).
 - Which screen showed the leather bias: tags, inventory or outfits?
 - Can we train on Depop data given its ToS?
 - Does Anjelo agree an eval script isn't an automated test?

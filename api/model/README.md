@@ -11,14 +11,13 @@ Paste this:
 > Read api/model/AGENTS.md and follow it. Then summarise STATUS.md and the latest LOG.md entries, and tell me what you'd do next.
 
 ## Setup
-- **Prod DB (not verified yet, waiting on Anjelo):** it runs in Docker on Anjelo's server and listens on 127.0.0.1:5432 only (compose.yaml), so connect over Tailscale + SSH. Use a read-only role if Anjelo makes one.
-  - Run one query on the server: `ssh <user>@<server> 'cd <repo> && docker compose exec -T postgres psql -U seam seam' < query.sql`
-  - Or tunnel, for local tools: `ssh -N -L 5433:127.0.0.1:5432 <user>@<server>`, then `psql postgresql://seam:<password>@localhost:5433/seam`. Use 5433 because local 5432 is taken by another project.
+- **Prod data (verified 2026-10-28):** log into the prod site as an `ADMIN_EMAILS` user, open `/admin`, export, and save it as `data/models/snapshots/items-<date>.jsonl`. Items table only, 10 exports per 15 min. Run `python3 api/model/queries/h1_jsonl.py <file>` for H1. There's no direct DB access.
 - Old local snapshot: `data/seam.db` (SQLite, 2026-10-18, 1,107 tagged items, before Depop and the `leather` query). Queries for it are in `queries/`.
 - Training box: Caden's PC (RTX 3080 Ti, 12 GB) under WSL2 (RESEARCH.md §7).
 - Data and weights go in `data/models/` (gitignored).
 
 ## Step 1: is the inventory leather-heavy? (H1)
+On an export: `python3 api/model/queries/h1_jsonl.py <file>`. On a Postgres you can reach:
 ```sql
 SELECT source, slot,
        count(*) AS items,
