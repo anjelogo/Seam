@@ -53,6 +53,8 @@ def _copy_siblings(src: Path, dst: Path) -> None:
     if src.resolve() == dst.resolve():
         return
     for path in src.iterdir():
+        if path.name.startswith("._"):
+            continue
         if path.is_file() and "_scene." not in path.name and not path.name.endswith("_sim.obj"):
             shutil.copy2(path, dst / path.name)
 
