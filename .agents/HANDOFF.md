@@ -9,6 +9,12 @@ Format:
 
 ---
 
+## 2026-10-28 23:10 · anjelo · gen3d drape taichi spike
+- new spike engine `drape.sim_taichi` (gstaichi 4.6.0, Vulkan/Metal/CUDA/CPU) runs a portable scene file from `python -m drape.scene export`; `drape.drape --engine newton|taichi --scene <npz>` runs one; format in gen3d/drape/SCENE_FORMAT.md
+- Windows sim env: `drape/scripts/setup_taichi.ps1` (`.venv-taichi`, gstaichi + numpy only); macOS: `setup_taichi.sh`
+- A770 results (2 spike items pass, full set and Metal not run) in gen3d/drape/RESULTS_TAICHI.md
+- action needed: none (gen3d drape only; Newton stays the default, nothing wired into prod)
+
 ## 2026-10-28 12:30 · caden · api + web admin
 - new env var ADMIN_EMAILS (comma list, empty = nobody): those logged-in users can open /admin; everyone else gets 404 from /admin/* (anon 401)
 - GET /admin/stats {items,tagged,active}; GET /admin/export/items streams the items table as JSONL (fixed column list, never user/session/look tables), 10 per 15 min per admin, logged to stdout
