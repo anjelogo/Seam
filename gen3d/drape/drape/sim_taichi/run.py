@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import os
-import platform
 import shutil
-import subprocess
-import threading
 import time
 import traceback
 from pathlib import Path
@@ -16,6 +11,7 @@ import numpy as np
 
 from .io import Scene, load_scene, write_dump, write_sim_obj
 from .solver import Sim
+from .vram import VramSampler
 
 
 class FrameTimeout(RuntimeError):
@@ -24,70 +20,6 @@ class FrameTimeout(RuntimeError):
 
 class SimTimeout(RuntimeError):
     pass
-
-
-class VramSampler:
-    def __init__(self, arch: str) -> None:
-        self.arch = arch
-        self.peak: float | None = None
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def __enter__(self) -> VramSampler:
-        target = None
-        if self.arch == "cuda" and shutil.which("nvidia-smi"):
-            target = self._poll_nvidia
-        elif self.arch == "vulkan" and platform.system() == "Windows" and shutil.which("typeperf"):
-            target = self._poll_windows
-        if target is not None:
-            self._thread = threading.Thread(target=target, daemon=True)
-            self._thread.start()
-        return self
-
-    def _remember(self, value: float) -> None:
-        self.peak = value if self.peak is None else max(self.peak, value)
-
-    def _poll_nvidia(self) -> None:
-        while not self._stop.is_set():
-            try:
-                result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                values = [float(line) for line in result.stdout.splitlines() if line.strip()]
-                if values:
-                    self._remember(max(values))
-            except (OSError, subprocess.TimeoutExpired, ValueError):
-                pass
-            self._stop.wait(0.5)
-
-    def _poll_windows(self) -> None:
-        counter = rf"\GPU Process Memory(pid_{os.getpid()}*)\Dedicated Usage"
-        while not self._stop.is_set():
-            try:
-                result = subprocess.run(
-                    ["typeperf", counter, "-sc", "1"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                rows = list(csv.reader(result.stdout.splitlines()))
-                if len(rows) >= 2:
-                    values = [float(value) for value in rows[-1][1:] if value and value != "-1"]
-                    if values:
-                        self._remember(sum(values) / (1024.0 * 1024.0))
-            except (OSError, subprocess.TimeoutExpired, ValueError):
-                pass
-            self._stop.wait(0.5)
-
-    def __exit__(self, exc_type, exc, trace) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
 
 
 def _fail(fails: dict[str, list[str]], tag: str, name: str) -> None:
@@ -240,13 +172,13 @@ def run_scene(
             body_collisions=body_collisions,
             self_collisions=self_collisions,
             fails=fails,
-            vram_mb=None if vram.peak is None else round(vram.peak, 1),
             device=arch,
             nan_count=nan_count,
             overflow=overflow,
             arch=arch,
             engine="taichi",
         )
+        record.update(vram.fields())
 
     (el / "sim_record.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
     if timings is not None:
